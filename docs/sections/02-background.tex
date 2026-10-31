@@ -60,24 +60,25 @@ Agents are an unusual kind of workload. The AX documentation puts it this way: t
   \item Each actor is isolated in a sandbox, using either \textbf{gVisor} (a user-space kernel that intercepts system calls of ordinary OCI containers) or lightweight \textbf{microVMs}.
   \item Actors can be \textbf{suspended}: their memory and filesystem are snapshotted, and they are resumed later, typically in well under a second.
   \item All inbound traffic to actors goes through the \textbf{atenet router}, which selects the target actor from a single header (\code{ate-target-actor: <atespace>/<name>}) and resumes it first if necessary~\cite{ax-networking}.
-  \item Substrate can enforce \textbf{egress controls}, i.e.\ restrict which outbound destinations an actor may reach.
+  \item Substrate can enforce \textbf{egress controls}, i.e.\ restrict which outbound destinations an actor may reach. AX configures them per task through its \code{Gateway} resource (Section~\ref{sec:ax-primitives}).
 \end{itemize}
 
 \subsection{Google AX}
 
-\textbf{AX} is a ``high-throughput, declarative orchestrator to run billions of autonomous agent workloads in a cluster'', built on top of Agent Substrate~\cite{ax}. If Kubernetes lets you declare \emph{services}, AX lets you declare \emph{agent tasks}. It is written in Go, licensed under Apache~2.0, and at the time of writing (September 2026) its API is \code{ax.io/v1alpha1}, explicitly marked as subject to breaking changes.
+\textbf{AX} is a ``high-throughput, declarative orchestrator to run billions of autonomous agent workloads in a cluster'', built on top of Agent Substrate~\cite{ax}. If Kubernetes lets you declare \emph{services}, AX lets you declare \emph{agent tasks}. It is written in Go and licensed under Apache~2.0. This document follows release v0.3.0 (September 2026) and the \code{main} branch as of October 2026. The API is \code{ax.io/v1alpha1}; the README warns that AX is in heavy development and that major breaking changes are likely before a stable release.
 
-\subsubsection{Three primitives}
+\subsubsection{Four primitives}\label{sec:ax-primitives}
 
 \begin{description}[leftmargin=0pt,labelindent=0pt,itemsep=0.4em]
-  \item[\code{Task}] The smallest unit of isolated execution. It declares a container image and command, CPU and memory requests and limits, environment variables, and which workspaces to mount. A task can be the whole job or the root of a tree of tasks that an agent spawns as it breaks a problem down.
+  \item[\code{Task}] The smallest unit of isolated execution. It declares a container image and command, CPU and memory requests and limits, environment variables, which workspaces to mount, and which gateway to use (\code{spec.gateway}). A task can be the whole job or the root of a tree of tasks that an agent spawns as it breaks a problem down.
   \item[\code{Workspace}] Everything an agent needs before its first useful action: Git repositories cloned at the right branch, files such as an \code{AGENTS.md}, MCP (Model Context Protocol) servers the agent may call, and skill packages. A workspace binding may carry a natural-language \code{goal} (``install dependencies and run the test suite''), which a setup agent fulfils on first boot.
-  \item[\code{Model}] Which LLM provider and model the platform uses, with generation parameters and a reference to the Kubernetes secret holding the API key.
+  \item[\code{Gateway}] The network boundary of a task: the listeners the task exposes and an \textbf{egress allowlist} of hosts and ports the sandbox may reach (\code{spec.egress.allowlist.hosts}). The task's \code{GatewayReady} condition confirms that the gateway's network policies were applied to its sandbox~\cite{ax-concepts}.
+  \item[\code{Model}] Which LLM provider and model the platform uses, with generation parameters and a reference to the Kubernetes secret holding the API key. AX's own components also read models, for example when a setup agent plans a workspace from its \code{goal}.
 \end{description}
 
 A complete, minimal example:
 
-\begin{lstlisting}[language=yaml,caption={An AX task with one workspace (adapted from the AX documentation~\cite{ax-manifests}).},label={lst:ax-task}]
+\begin{lstlisting}[language=yaml,caption={An AX task with one workspace and one gateway (adapted from the AX documentation~\cite{ax-manifests}).},label={lst:ax-task}]
 apiVersion: ax.io/v1alpha1
 kind: Workspace
 metadata:
@@ -93,6 +94,17 @@ spec:
         endpoint: "http://catalog-mcp.default.svc.cluster.local:8080"
 ---
 apiVersion: ax.io/v1alpha1
+kind: Gateway
+metadata:
+  name: shop-gateway
+spec:
+  egress:
+    allowlist:
+      hosts:
+        - { host: "shop.example.com", port: 443 }
+        - { host: "api.llm.example",  port: 443 }
+---
+apiVersion: ax.io/v1alpha1
 kind: Task
 metadata:
   name: shop-7f3a
@@ -105,44 +117,60 @@ spec:
   workspaces:
     - name: shop-assistant
       path: "/workspace"
+  gateway:
+    name: shop-gateway
 \end{lstlisting}
 
 \subsubsection{Lifecycle and command line}
 
-A task has a one-word \code{phase} (\code{Running}, \code{Suspended}, \code{Failed}, \ldots) and detailed \emph{conditions} such as \code{WorkspaceReady} and \code{Ready}. The \code{ax} CLI is deliberately shaped like \code{kubectl}:
+A task has a one-word \code{phase} (\code{Running}, \code{Suspended}, \code{Failed}, \code{Terminating}, \ldots) and detailed \emph{conditions}: \code{WorkspaceReady}, \code{GatewayReady} and \code{Ready}. The \code{ax} CLI is deliberately shaped like \code{kubectl}:
 
 \begin{lstlisting}[language=bash]
-ax apply -f task.yaml            # create task + workspace + model
+ax apply -f task.yaml            # create or update task, workspace, gateway, model
 ax get tasks                     # list tasks and their phase
+ax describe task shop-7f3a       # phase, conditions and events
 ax watch task shop-7f3a          # stream phase and condition changes
-ax ssh shop-7f3a -- ls /workspace  # look inside the sandbox (debug only)
 ax suspend task shop-7f3a        # checkpoint and pause
 ax resume task shop-7f3a         # continue where it left off
+ax ssh shop-7f3a -- ls /workspace  # look inside (only if spec.debug: true)
 \end{lstlisting}
+
+\code{ax ssh} relies on guest services inside the sandbox that allow arbitrary process execution and file access. They are off by default and only enabled when the task sets \code{spec.debug: true}~\cite{ax-sandbox}.
 
 \subsubsection{Architecture}
 
-Figure~\ref{fig:ax-arch} shows how the parts fit together. The \code{ax} CLI talks gRPC to \code{ax-server}, which validates manifests, stores state in Redis (instead of Kubernetes' own database, to scale to millions of short-lived tasks) and reconciles directly with Agent Substrate~\cite{ax-design}. Inside every sandbox, the first process (PID~1) is \code{ax-task-runner}. It prepares the workspaces, starts the agent's command, and serves a small metadata HTTP API on port~80 through which the agent can read its own task and workspace configuration.
+Figure~\ref{fig:ax-arch} shows how the parts fit together. The control plane consists of three services~\cite{ax-design}:
+
+\begin{itemize}
+  \item \code{ax-server}, a stateless gRPC API that validates manifests, stores state in Redis (instead of Kubernetes' own database, to scale to millions of short-lived tasks) and publishes events to Redis Streams;
+  \item \code{ax-controller}, a reconciler that consumes those streams, provisions atespaces and actors on Agent Substrate, applies each task's gateway egress policy, and drives tasks to their desired state;
+  \item \code{ax-task-runner}, the first process (PID~1) inside every sandbox. It prepares the workspaces, starts the agent's command, and serves a small metadata HTTP API on port~80 through which the agent can read its own task and workspace configuration.
+\end{itemize}
 
 \begin{figure}[H]
   \centering
   \includegraphics[width=\linewidth]{ax_architecture.png}
-  \caption{AX architecture. The developer applies manifests with the \code{ax} CLI; \code{ax-server} persists them in Redis and asks Agent Substrate to create sandboxed actors on worker nodes. Each sandbox runs \code{ax-task-runner} as PID~1, the agent command, and a durable \code{/workspace} that survives suspension.}
+  \caption{AX architecture. The developer applies manifests with the \code{ax} CLI; \code{ax-server} persists them in Redis and publishes events; \code{ax-controller} consumes the stream, asks Agent Substrate to create sandboxed actors on worker nodes, and applies each task's \code{Gateway} egress policy. Each sandbox runs \code{ax-task-runner} as PID~1, the agent command, and a durable \code{/workspace} that survives suspension.}
   \label{fig:ax-arch}
 \end{figure}
 
-\subsubsection{Extension points that matter for us}
+The gRPC service is \code{ax.v1alpha1.AX}. For tasks it offers \code{GetTask}, \code{ListTasks}, \code{UpdateTask}, \code{DeleteTask}, \code{SuspendTask}, \code{ResumeTask} and \code{WatchTask}; gateways, workspaces and models have matching \code{Get}, \code{List}, \code{Update} and \code{Delete} calls. There is no separate create call: \code{UpdateTask} creates a task or updates an existing one. The API's authentication and authorisation are not documented.
 
-Three documented features let us add a KYA layer without changing AX:
+\subsubsection{Extension points that matter for us}\label{sec:ax-extension}
+
+Four documented features let us add a KYA layer without changing AX:
 
 \begin{enumerate}
-  \item \textbf{The \code{--server} flag.} The CLI can be pointed at any gRPC endpoint that speaks the \code{ax.v1alpha1.AX} service. We can place our admission proxy there and forward accepted calls to the real \code{ax-server}.
-  \item \textbf{Custom runners.} The runner contract is public: any image with an executable at \codeurl{/usr/local/bin/ax-task-runner} that serves \code{/healthz} and \code{/readyz} on port~80 is accepted. AX also exposes the runner as a Go package (\codeurl{github.com/google/ax/runner}) that can be embedded with extra logic~\cite{ax-runner}. Our KYA runner uses this.
+  \item \textbf{The \code{--server} flag.} The CLI can be pointed at any gRPC endpoint that speaks the \code{ax.v1alpha1.AX} service, either with \code{--server} or through the \code{AX\_SERVER} environment variable. We can place our admission proxy there and forward accepted calls to the real \code{ax-server}.
+  \item \textbf{Custom runners.} The runner contract is public: the controller always starts \codeurl{/usr/local/bin/ax-task-runner}, passes the task and its workspaces as \code{AX\_TASK\_YAML} and \code{AX\_WORKSPACES\_YAML}, and expects \code{/healthz} and \code{/readyz} on port~80. A custom image is selected with \code{spec.image}. AX also exposes the runner as a Go package (\codeurl{github.com/google/ax/runner}) that can be embedded with extra logic~\cite{ax-runner}. Our KYA runner uses this.
+  \item \textbf{The \code{Gateway} resource.} A task bound to a gateway whose egress allowlist contains a single host can reach nothing else. This lets us make our own proxy the only way out of every sandbox.
   \item \textbf{The \code{SuspendTask} RPC.} Any authorised client can checkpoint and pause a task. Our trust observer uses it as an emergency brake.
 \end{enumerate}
 
 \begin{warnbox}[What AX does \emph{not} provide today]
-The AX roadmap lists ``SPIFFE identity for tasks'', ``governance'' (access control, policy enforcement, budget guardrails, audit) and ``telemetry and trajectory collection'' as future work~\cite{ax-roadmap}. None of these exist in the current release. They are precisely the areas this project covers, which makes our work complementary to the project's own direction rather than competing with it.
+The AX roadmap~\cite{ax-roadmap} lists as future work: SPIFFE IDs and X.509-SVIDs for task actors and gateways; ``governance'' (access control, policy enforcement, budget guardrails, audit); token and timeout budgets and approval policies in the \code{Task} spec; OpenTelemetry metrics, traces and trajectories at the runner and gateway layers; continuous reconciliation of \code{Gateway} changes; and a swappable gateway interface. None of these exist in release v0.3.0.
+
+Most of them overlap with this project. The overlap is complementary rather than competing: AX's planned budgets, approvals and mTLS identities control the platform from the inside, whereas AgentPassport produces evidence that services \emph{outside} the cluster can verify at the level of actions and amounts. Where AX ships a native feature, we adopt it (Section~\ref{sec:seams}).
 \end{warnbox}
 
 \subsection{Know Your Agent (KYA)}
