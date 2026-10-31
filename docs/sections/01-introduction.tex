@@ -1,0 +1,74 @@
+\section{Introduction}
+
+\subsection{Agents are becoming users of the internet}
+
+Until recently, the ``user'' of a web service was either a human behind a browser or a program written for one fixed purpose, such as a mobile app or a nightly batch job. Large language model (LLM) agents change this. An agent receives a goal in natural language, plans, calls tools, reads whatever it finds, and decides the next step by itself. The same agent may, within a few minutes, search a catalogue, compare prices, fill a form and pay.
+
+Many developers already experience a small version of this every day. A coding assistant running in a terminal can spawn \emph{sub-agents}: one explores the repository, another writes code, a third runs the tests. They run on the developer's own laptop, with the developer's own files and permissions, and the developer is watching. If something goes wrong, the developer presses Ctrl-C.
+
+Now imagine the same idea in the cloud, at scale: thousands of agents, each working on a different task for a different person, running for hours while nobody is watching any individual one. This is exactly the workload that \textbf{Google AX} was built for. AX is an open-source orchestrator that runs every agent task in its own sandbox, prepares its working environment (repositories, tools, skills), and lets operators suspend, resume and inspect tasks with a \code{kubectl}-like command line~\cite{ax}.
+
+\subsection{The missing question: who is this agent?}
+
+AX answers the question \emph{``how do I run many agents safely inside my cluster?''}. It does not answer the question that every service on the \emph{receiving} end of an agent's request must ask. Consider an online shop that receives the following request:
+
+\begin{lstlisting}[language=http]
+POST /api/orders HTTP/1.1
+Host: shop.example.com
+Content-Type: application/json
+
+{"item": "usb-c-cable", "qty": 2, "amount": 180}
+\end{lstlisting}
+
+From the shop's point of view this is just an HTTP request. It cannot tell:
+
+\begin{itemize}
+  \item whether the request comes from a human, a legitimate agent, or a bot pretending to be an agent;
+  \item \emph{which} agent it is, and which code and model are driving it;
+  \item which real person or organisation is accountable if the order is fraudulent;
+  \item whether that person actually allowed the agent to spend 180 TRY at this shop;
+  \item whether the agent has been behaving normally, or whether it was hijacked five minutes ago by a malicious instruction hidden in a web page.
+\end{itemize}
+
+The financial world solved a similar problem for people long ago with \emph{Know Your Customer} (KYC): before a bank lets you move money, it verifies who you are. The emerging idea of \textbf{Know Your Agent (KYA)} applies the same thinking to software agents~\cite{sumsub-kya,entrust-kya,vouched-kya}: give each agent a verifiable identity, bind it to an accountable human, state what it is allowed to do, and keep checking that its behaviour matches.
+
+\begin{keyidea}
+AX gives agents a \emph{safe place to run}. KYA gives them a \emph{passport to act} in the outside world. This project connects the two: every AX task automatically receives a KYA passport, every request it makes is signed with it, any service can verify it, and misbehaving agents lose it.
+\end{keyidea}
+
+\subsection{What we will build}
+
+We will design, implement and evaluate \textbf{AgentPassport}, a KYA trust layer that runs \emph{next to} AX without forking it. It consists of seven cooperating components, all described in detail in Section~\ref{sec:components}:
+
+\begin{enumerate}
+  \item \comp{Admission proxy}: sits in front of the AX API. When a person launches a task, it authenticates the person, checks the task against policy, and requests a passport.
+  \item \comp{Passport authority}: issues, signs, stores and revokes agent passports.
+  \item \comp{KYA runner}: a custom version of AX's in-sandbox runner that configures the sandbox so that the agent's outbound traffic goes through our gateway, reports what the agent does, and tells the agent about pending approvals. (The runner only \emph{routes} traffic; a network rule is what \emph{forces} it through the gateway, see Section~\ref{sec:seams}.)
+  \item \comp{Egress gateway}: the only way out of a sandbox. It enforces an allowlist, attaches the passport to each request and signs it with a key the agent never sees.
+  \item \comp{Verifier SDK}: a small middleware for third-party services (Spring Boot and Go) that verifies signed agent requests and makes an allow, deny or ``approval required'' decision. The service never has to contact a human itself; the KYA platform asks the agent's principal and returns a signed approval.
+  \item \comp{Trust observer}: turns runtime signals into a trust score and suspends the task in AX, or revokes its passport, when the score drops.
+  \item \comp{Audit ledger and console}: a tamper-evident log of everything that happened, and a dashboard where principals see their agents and approve risky actions.
+\end{enumerate}
+
+\subsection{Goals and non-goals}
+
+\textbf{Goals.}
+\begin{itemize}
+  \item Every agent request that leaves the cluster is attributable to a specific task, a specific container image and model, and a specific authenticated human.
+  \item A service receiving an agent request can verify that attribution cryptographically, without trusting the network or the agent.
+  \item The damage a compromised or confused agent can do is bounded by an explicit, human-approved scope (hosts, actions, amounts, time).
+  \item Abnormal behaviour is detected at runtime and the agent is stopped automatically.
+  \item All of this works with AX as it is today, through documented extension points only.
+\end{itemize}
+
+\textbf{Non-goals.}
+\begin{itemize}
+  \item We do not try to make the LLM itself safe or to detect every prompt injection in text. We limit what an agent \emph{can do}, not what it \emph{thinks}.
+  \item We do not build a production identity-verification service for humans (document scanning, liveness checks). We rely on an existing OpenID Connect (OIDC) login.
+  \item We do not modify AX or Agent Substrate source code. If AX later ships native features that overlap with ours (its roadmap mentions SPIFFE identities and telemetry~\cite{ax-roadmap}), our design should be able to adopt them.
+  \item We do not handle real money. All payment flows run against a demo relying party.
+\end{itemize}
+
+\subsection{How to read this document}
+
+Section~\ref{sec:background} explains the background with no prior knowledge assumed: containers and Kubernetes, Agent Substrate, AX, and KYA. Section~\ref{sec:problem} analyses what is missing and turns it into requirements. Section~\ref{sec:overview} presents the architecture and an end-to-end walkthrough; Section~\ref{sec:components} goes through each component. Section~\ref{sec:examples} contains six worked examples, from a normal purchase to a prompt-injection attack. Sections~\ref{sec:threats}--\ref{sec:plan} cover the threat model, the evaluation plan and the project plan.

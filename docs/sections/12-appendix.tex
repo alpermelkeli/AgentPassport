@@ -1,0 +1,97 @@
+\section{Glossary}
+
+\begin{center}
+\small
+\begin{longtable}{@{}L{3.8cm}L{12.3cm}@{}}
+\toprule
+\textbf{Term} & \textbf{Definition}\\
+\midrule
+\endhead
+Action & A named operation at a relying party (e.g.\ \code{order.create}) that a visa can allow.\\
+Admission proxy & Our gRPC front end to \code{ax-server}; authenticates principals, enforces policy, requests passports.\\
+Agent & Software driven by an LLM that plans and acts with tools to reach a goal.\\
+Approval grant & Short-lived token, signed by the PA after a principal approves, bound to one request digest.\\
+Atespace & Agent Substrate's namespace for actors; AX tasks live in atespaces.\\
+Attenuation & Deriving a credential with fewer rights than the original; never more.\\
+AX & Google's declarative orchestrator for agent tasks, built on Agent Substrate.\\
+Egress gateway & Our forward proxy through which all sandbox traffic leaves the cluster; signs requests.\\
+gVisor & A user-space kernel that isolates containers by intercepting their system calls.\\
+KYA & Know Your Agent: identifying agents, binding them to accountable principals, limiting and monitoring them.\\
+KYC & Know Your Customer: identity checks required of banks and other regulated businesses.\\
+MCP & Model Context Protocol: a standard way for agents to call tools and data sources.\\
+OIDC & OpenID Connect: an identity layer on OAuth 2.0 used for single sign-on.\\
+Passport & A signed token describing an agent's identity, principal, visa and validity.\\
+Passport authority (PA) & Our service that issues, publishes and revokes passports.\\
+Principal & The human or organisation accountable for an agent.\\
+Prompt injection & Hiding instructions in content an LLM reads so that it follows them instead of its user.\\
+Relying party & A service that receives agent requests and decides whether to serve them.\\
+RFC 9421 & The IETF standard for signing HTTP messages.\\
+Sandbox & The isolated environment in which one AX task runs.\\
+SPIFFE ID & A standard URI naming a workload, e.g.\ \code{spiffe://kya.dev/ns/default/task/shop-7f3a}.\\
+Step-up & Requiring additional approval from the principal before a risky request is served.\\
+Task & AX's unit of isolated agent execution.\\
+Trust observer & Our service that scores runtime behaviour and suspends misbehaving tasks.\\
+Visa & The part of a passport listing allowed hosts, actions, limits and approval thresholds.\\
+Workspace & AX resource describing repositories, tools and skills prepared for a task.\\
+\bottomrule
+\end{longtable}
+\end{center}
+
+\section{Passport claim reference}
+
+\begin{center}
+\small
+\begin{longtable}{@{}L{4.6cm}L{11.5cm}@{}}
+\toprule
+\textbf{Claim} & \textbf{Meaning}\\
+\midrule
+\endhead
+\code{iss} & Issuer: URL of the passport authority.\\
+\code{sub} & Agent identifier (SPIFFE-style URI of the AX task).\\
+\code{aud} & Intended audience; \code{kya:relying-parties} or a specific host.\\
+\code{jti} & Unique passport identifier; used for revocation and audit.\\
+\code{iat}, \code{nbf}, \code{exp} & Issued at, not before, expiry (Unix time).\\
+\code{cnf.jwk} & Public task key; requests must be signed with its private half.\\
+\code{kya.ver} & Version of the AgentPassport claim format.\\
+\code{kya.task.atespace}, \code{.name} & Location of the task in AX.\\
+\code{kya.task.image} & Digest of the container image running the agent.\\
+\code{kya.task.manifest} & Hash of the canonical task and workspace specification.\\
+\code{kya.task.model} & Model the task is configured to use.\\
+\code{kya.principal.sub} & Stable identifier (or pairwise pseudonym) of the accountable person.\\
+\code{kya.principal.idp}, \code{.auth\_time}, \code{.org} & Identity provider, login time, organisation or group.\\
+\code{kya.visa.hosts} & Hosts the agent may reach.\\
+\code{kya.visa.actions[]} & Allowed actions with optional \code{per\_request}, \code{total} and \code{approval\_above} limits.\\
+\code{kya.parent} & \code{jti} of the parent passport for sub-tasks; \code{null} for root tasks.\\
+\code{kya.status} & URL returning the live status of this passport.\\
+\bottomrule
+\end{longtable}
+\end{center}
+
+\section{Signature verification checklist}
+
+For implementers of third-party verifiers, a request is accepted only if all of the following hold:
+
+\begin{enumerate}
+  \item \code{Signature-Input} contains a signature labelled with \code{tag="kya-v1"} covering at least \code{@method}, \code{@authority}, \code{@path}, \code{kya-passport} and, if a body is present, \code{content-digest}.
+  \item \code{created} is within 60 seconds of the verifier's clock, and the pair (\code{keyid}, \code{nonce}) has not been seen in the last 5 minutes.
+  \item \code{Content-Digest} matches the SHA-256 of the received body.
+  \item The \code{KYA-Passport} JWT verifies against a current issuer key from the PA's JWKS; \code{nbf} $\le$ now $<$ \code{exp}; \code{aud} matches.
+  \item The \code{jti} is not on the latest revocation list (age $\le$ 60 seconds).
+  \item The request signature verifies with the key in \code{cnf.jwk}, and \code{keyid} equals its \code{kid}.
+  \item The request's host is in \code{kya.visa.hosts} and its action is in \code{kya.visa.actions}, with amount limits respected, or a valid \code{KYA-Approval} grant bound to this request digest is present.
+  \item If \code{kya.parent} is set, the chain up to a root passport is valid and each child visa is a subset of its parent.
+\end{enumerate}
+
+\section{Revision history}
+
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{@{}lL{2.6cm}Y@{}}
+\toprule
+\textbf{Version} & \textbf{Date} & \textbf{Changes}\\
+\midrule
+v0.1 & September 2026 & First complete draft.\\
+v0.2 & September 2026 & Step-up approvals redesigned to be agent-aware: explicit problem document with approval id and status URL, read-only status endpoint and MCP tools in the KYA runner, verified facts versus agent justification in the console, no trust penalty for approval requests (Sections~\ref{sec:stepup}, \ref{sec:ex-stepup}, new Figure~\ref{fig:stepup}). Clarified that the KYA runner only configures routing and that a network rule enforces it. New threat: persuasive justifications.\\
+\bottomrule
+\end{tabularx}
+\end{center}

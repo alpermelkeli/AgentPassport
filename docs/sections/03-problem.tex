@@ -1,0 +1,79 @@
+\section{Problem analysis and requirements}\label{sec:problem}
+
+\subsection{Gap analysis}
+
+Table~\ref{tab:gap} compares what AX provides today with what a KYA-capable platform needs. The right-hand column names the AgentPassport component that closes each gap.
+
+\begin{table}[H]
+\small
+\begin{tabularx}{\linewidth}{@{}L{2.6cm}YYL{2.6cm}@{}}
+\toprule
+\textbf{Concern} & \textbf{AX today} & \textbf{Gap} & \textbf{Our component}\\
+\midrule
+Isolation & Every task in a gVisor or microVM sandbox with CPU/memory limits. & None; we rely on it. & (AX)\\
+Who launched the task & Whoever can reach \code{ax-server}. No user identity on tasks. & No accountable human attached to a task. & Admission proxy\\
+Agent identity & Task name and atespace; no cryptographic identity (SPIFFE is on the roadmap). & Outside services cannot verify which agent is calling. & Passport authority\\
+Permissions & Resource limits only. & No notion of allowed hosts, actions or spending limits. & Policy store, passport visa\\
+Outbound traffic & Substrate supports egress controls; AX does not configure them per task. & No per-task allowlist, no request signing. & Egress gateway\\
+Verification by third parties & Not in scope. & Services have no way to check agent requests. & Verifier SDK\\
+Runtime monitoring & \code{ax watch} shows phase changes; no behavioural telemetry. & Hijacked or looping agents are not detected. & Trust observer\\
+Emergency stop & \code{ax suspend} exists, but a human must run it. & No automatic reaction. & Trust observer\\
+Audit & Task state in Redis. & No tamper-evident history of what agents did. & Audit ledger\\
+Sub-agents & Tasks may spawn tasks. & A child could get more power than its parent. & Delegation chains\\
+\bottomrule
+\end{tabularx}
+\caption{What AX provides versus what KYA requires.}
+\label{tab:gap}
+\end{table}
+
+\subsection{Actors and roles}
+
+\begin{description}[leftmargin=0pt,labelindent=0pt]
+  \item[Principal] A human (or organisation account) who launches agent tasks and is accountable for them. In our deployment: students and staff logging in with the university SSO.
+  \item[Platform operator] Runs the cluster, AX and AgentPassport; writes platform-wide policy.
+  \item[Agent] The code running inside an AX task, driven by an LLM. We assume it may be buggy, confused, or hijacked by malicious input at any time.
+  \item[Relying party] Any external service that receives requests from agents (a shop, a bank API, a SaaS product) and wants to decide whether to serve them.
+  \item[Attacker] Anyone trying to make an agent do something its principal did not intend, or trying to impersonate an agent. See Section~\ref{sec:threats}.
+\end{description}
+
+\subsection{Functional requirements}
+
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{@{}lY@{}}
+\toprule
+\textbf{ID} & \textbf{Requirement}\\
+\midrule
+FR1 & A task can only be created by an authenticated principal; the principal's identity is recorded with the task.\\
+FR2 & Every task creation is checked against policy (allowed images, models, hosts, actions, limits) and rejected with a clear reason if it violates it.\\
+FR3 & Every admitted task receives a signed passport describing its identity, principal, visa and validity.\\
+FR4 & All outbound network traffic from a task passes through the egress gateway; traffic to hosts outside the visa is blocked.\\
+FR5 & Every request to a relying party carries the passport and an RFC~9421 signature produced by a key that never enters the sandbox.\\
+FR6 & A relying party can verify signature, passport validity, revocation status, scope and limits with a few lines of integration code.\\
+FR7 & Requests above a configured risk (e.g.\ amount) trigger a step-up: the principal must approve before the request succeeds. The agent is told explicitly that approval is pending, can follow its status, and learns the decision, but can never grant approval itself.\\
+FR8 & Runtime behaviour produces a trust score per task; crossing thresholds triggers narrowing of the visa, suspension of the task via AX, and passport revocation.\\
+FR9 & A task spawning a sub-task can only give it a subset of its own permissions; relying parties can verify the chain back to the human.\\
+FR10 & All security-relevant events are written to a tamper-evident audit ledger, queryable per task and per principal.\\
+FR11 & A console shows live tasks, passports, denials and pending approvals, and lets principals approve or reject step-ups.\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Non-functional requirements}
+
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{@{}lY@{}}
+\toprule
+\textbf{ID} & \textbf{Requirement}\\
+\midrule
+NFR1 & \textbf{No fork.} AX and Agent Substrate are used unmodified, through documented extension points only.\\
+NFR2 & \textbf{Low overhead.} The gateway adds less than 10~ms median latency per request; verification takes less than 2~ms with cached keys.\\
+NFR3 & \textbf{Fast reaction.} From the event that crosses the suspend threshold to the task being suspended: under 5~seconds.\\
+NFR4 & \textbf{Offline verifiability.} A relying party can verify a request using only cached public keys and a recent revocation list, without calling us on every request.\\
+NFR5 & \textbf{Least privilege.} No long-lived secret usable for signing or for reaching external hosts is ever placed inside a sandbox.\\
+NFR6 & \textbf{Easy adoption.} Integrating the verifier into an existing Spring Boot service takes under 20 lines of code and configuration.\\
+NFR7 & \textbf{Open standards.} Formats follow existing RFCs where possible, so third parties can implement their own verifier.\\
+\bottomrule
+\end{tabularx}
+\end{center}

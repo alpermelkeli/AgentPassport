@@ -1,0 +1,137 @@
+\documentclass[11pt,a4paper]{article}
+
+% ---------- fonts and layout ----------
+\usepackage{fontspec}
+\setmainfont{Bitstream Charter}
+\setsansfont{Liberation Sans}
+\setmonofont{DejaVu Sans Mono}[Scale=0.82]
+\usepackage[a4paper,margin=2.2cm,headheight=14pt]{geometry}
+\usepackage{microtype}
+\linespread{1.08}
+\setlength{\parskip}{0.45em}
+\setlength{\parindent}{0pt}
+\setlength{\emergencystretch}{3em}
+\usepackage{xurl}
+
+% ---------- packages ----------
+\usepackage[dvipsnames,table]{xcolor}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{float}
+\usepackage[font=small,labelfont={bf,sf},format=hang,skip=6pt]{caption}
+\usepackage{listings}
+\usepackage[most]{tcolorbox}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{amsmath}
+\usepackage[hidelinks]{hyperref}
+\usepackage{bookmark}
+\usepackage{pdflscape}
+
+% ---------- colours (match figures) ----------
+\definecolor{kpurple}{HTML}{534AB7}
+\definecolor{kpurplebg}{HTML}{EEEDFE}
+\definecolor{kteal}{HTML}{0F6E56}
+\definecolor{ktealbg}{HTML}{E1F5EE}
+\definecolor{kcoral}{HTML}{993C1D}
+\definecolor{kcoralbg}{HTML}{FAECE7}
+\definecolor{kamber}{HTML}{854F0B}
+\definecolor{kamberbg}{HTML}{FAEEDA}
+\definecolor{kgray}{HTML}{5F5E5A}
+\definecolor{kgraybg}{HTML}{F4F3EE}
+\definecolor{kink}{HTML}{2C2C2A}
+\hypersetup{colorlinks=true,linkcolor=kpurple,urlcolor=kteal,citecolor=kpurple}
+
+% ---------- headings ----------
+\titleformat{\section}{\sffamily\Large\bfseries\color{kink}}{\color{kpurple}\thesection}{0.7em}{}
+\titleformat{\subsection}{\sffamily\large\bfseries\color{kink}}{\color{kpurple}\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}{\sffamily\normalsize\bfseries\color{kink}}{\color{kpurple}\thesubsubsection}{0.5em}{}
+\titlespacing*{\section}{0pt}{1.6em}{0.7em}
+\titlespacing*{\subsection}{0pt}{1.2em}{0.5em}
+\titlespacing*{\subsubsection}{0pt}{1.0em}{0.4em}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\sffamily\small\color{kgray}AgentPassport: design document}
+\fancyhead[R]{\sffamily\small\color{kgray}Draft v0.2}
+\fancyfoot[C]{\sffamily\small\color{kgray}\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\headrule}{\hbox to\headwidth{\color{black!15}\leaders\hrule height \headrulewidth\hfill}}
+
+\setlist{itemsep=0.2em,topsep=0.3em,leftmargin=1.4em}
+
+% ---------- listings ----------
+\lstdefinestyle{base}{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{kgraybg},
+  frame=single, rulecolor=\color{black!18}, framerule=0.4pt,
+  xleftmargin=6pt, xrightmargin=6pt, framexleftmargin=4pt, framexrightmargin=4pt,
+  aboveskip=0.8em, belowskip=0.6em,
+  breaklines=true, breakatwhitespace=false, columns=fullflexible, keepspaces=true,
+  showstringspaces=false, tabsize=2,
+  commentstyle=\color{kgray}\itshape,
+  stringstyle=\color{kteal},
+  keywordstyle=\color{kpurple}\bfseries,
+  captionpos=b,
+  literate={→}{{$\rightarrow$}}1 {≤}{{$\le$}}1 {≥}{{$\ge$}}1
+}
+\lstdefinelanguage{yaml}{
+  keywords={true,false,null},
+  comment=[l]{\#},
+  morestring=[b]",
+  morestring=[b]'
+}
+\lstdefinelanguage{json}{
+  morestring=[b]",
+  literate={→}{{$\rightarrow$}}1
+}
+\lstdefinelanguage{http}{
+  keywords={GET,POST,PUT,DELETE,HTTP/1.1},
+  morestring=[b]"
+}
+\lstset{style=base}
+
+% ---------- callout boxes ----------
+\newtcolorbox{keyidea}[1][Key idea]{enhanced,breakable,colback=kpurplebg,colframe=kpurple,
+  boxrule=0.6pt,arc=3pt,left=8pt,right=8pt,top=5pt,bottom=5pt,
+  fonttitle=\sffamily\bfseries\small,coltitle=white,title=#1}
+\newtcolorbox{example}[1][Example]{enhanced,breakable,colback=ktealbg,colframe=kteal,
+  boxrule=0.6pt,arc=3pt,left=8pt,right=8pt,top=5pt,bottom=5pt,
+  fonttitle=\sffamily\bfseries\small,coltitle=white,title=#1}
+\newtcolorbox{warnbox}[1][Caution]{enhanced,breakable,colback=kamberbg,colframe=kamber,
+  boxrule=0.6pt,arc=3pt,left=8pt,right=8pt,top=5pt,bottom=5pt,
+  fonttitle=\sffamily\bfseries\small,coltitle=white,title=#1}
+\newtcolorbox{attackbox}[1][Attack]{enhanced,breakable,colback=kcoralbg,colframe=kcoral,
+  boxrule=0.6pt,arc=3pt,left=8pt,right=8pt,top=5pt,bottom=5pt,
+  fonttitle=\sffamily\bfseries\small,coltitle=white,title=#1}
+
+\usepackage{tikz}
+\newcommand*\circled[1]{\tikz[baseline=(char.base)]{\node[shape=circle,fill=kpurple,text=white,inner sep=0pt,minimum size=1.35em,font=\sffamily\bfseries\footnotesize] (char) {#1};}}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\codeurl}[1]{\url{#1}}
+\newcommand{\comp}[1]{\textsf{\textbf{#1}}}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\renewcommand{\arraystretch}{1.25}
+\graphicspath{{figures/}}
+
+\begin{document}
+\input{sections/00-title}
+\input{sections/01-introduction}
+\input{sections/02-background}
+\input{sections/03-problem}
+\input{sections/04-overview}
+\input{sections/05-components}
+\input{sections/06-examples}
+\input{sections/07-threats}
+\input{sections/08-evaluation}
+\input{sections/09-plan}
+\input{sections/10-conclusion}
+\input{sections/11-references}
+\appendix
+\input{sections/12-appendix}
+\end{document}

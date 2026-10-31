@@ -1,0 +1,30 @@
+\begin{titlepage}
+\thispagestyle{empty}
+\vspace*{1.5cm}
+{\sffamily\color{kpurple}\large Graduation Project \textbullet{} Design Document\par}
+\vspace{0.6cm}
+{\sffamily\bfseries\fontsize{30}{36}\selectfont\color{kink} AgentPassport\par}
+\vspace{0.4cm}
+{\sffamily\LARGE\color{kink} A Know-Your-Agent trust layer for autonomous agents running on Google AX\par}
+\vspace{1.0cm}
+{\color{kpurple}\rule{\linewidth}{1.2pt}}
+\vspace{0.6cm}
+
+\begin{minipage}{0.92\linewidth}
+\large
+Autonomous AI agents are starting to act on the internet on behalf of people: they read web pages, call APIs, place orders and move money. Platforms such as Google AX make it easy to run thousands of these agents in isolated sandboxes, but they do not answer the question every service on the receiving end will ask: \emph{which agent is this, who is responsible for it, what is it allowed to do, and should I still trust it?} This project designs and builds \textbf{AgentPassport}, a Know-Your-Agent (KYA) layer that gives every AX task a verifiable passport, signs its outbound requests, lets third-party services check them, and watches agent behaviour at runtime so that a hijacked agent can be stopped within seconds.
+\end{minipage}
+
+\vfill
+\begin{tabularx}{\linewidth}{@{}lX@{}}
+\sffamily\bfseries Institution & Hacettepe University, Department of Computer Engineering\\
+\sffamily\bfseries Team & [team member names]\\
+\sffamily\bfseries Advisor & [advisor name]\\
+\sffamily\bfseries Version & Draft v0.2, September 2026\\
+\sffamily\bfseries Status & Proposal and system design, before implementation\\
+\end{tabularx}
+\vspace{0.5cm}
+\end{titlepage}
+
+\tableofcontents
+\newpage

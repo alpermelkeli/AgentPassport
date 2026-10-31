@@ -1,0 +1,75 @@
+\section{Threat model}\label{sec:threats}
+
+\subsection{Assets}
+
+\begin{itemize}
+  \item \textbf{The principal's money and accounts} at relying parties, which agents act on.
+  \item \textbf{The PA issuer key} and \textbf{task keys}: whoever holds them can create valid agent identities or requests.
+  \item \textbf{Relying parties' trust} in the KYA signal: if forged requests pass verification, the whole scheme loses its value.
+  \item \textbf{The audit history}: the basis for investigations and accountability.
+  \item \textbf{Cluster resources and model budget}, which runaway agents consume.
+\end{itemize}
+
+\subsection{Trust assumptions}
+
+We assume the following components are \emph{trusted} and correctly deployed: the Kubernetes control plane, Agent Substrate's isolation (gVisor or microVM), \code{ax-server}, and our own admission proxy, passport authority, egress gateway, observer and ledger. We assume the university OIDC provider authenticates people correctly. Standard cryptography (Ed25519, SHA-256, TLS~1.3) is assumed to be secure.
+
+We assume nothing about the \emph{agent}: its code, its model, its inputs and everything else inside the sandbox may be malicious at any time.
+
+\subsection{Adversaries}
+
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{@{}lL{3.6cm}Y@{}}
+\toprule
+\textbf{ID} & \textbf{Adversary} & \textbf{Capabilities}\\
+\midrule
+A1 & Content attacker & Controls some content the agent reads (web pages, product descriptions, e-mails, tool outputs). Classic indirect prompt injection.\\
+A2 & Compromised agent & Controls all code in one sandbox (for example via a malicious dependency or full model hijack).\\
+A3 & External impersonator & Sits outside the cluster; can send arbitrary requests to relying parties and may obtain copies of past requests (logs, leaks).\\
+A4 & Careless principal & Launches tasks with too-broad permissions or approves step-ups without reading.\\
+A5 & Malicious insider & Operates the platform. \emph{Out of scope}, except that the audit ledger makes tampering detectable.\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Threats and mitigations}
+
+Table~\ref{tab:stride} lists threats grouped by the STRIDE categories.
+
+\begin{table}[H]
+\small
+\begin{tabularx}{\linewidth}{@{}L{2.1cm}L{4.4cm}Y@{}}
+\toprule
+\textbf{Category} & \textbf{Threat} & \textbf{Mitigation}\\
+\midrule
+Spoofing & A3 sends requests pretending to be a legitimate agent. & Requests must carry a PA-signed passport and a fresh signature with the key in \code{cnf}; neither can be produced outside the gateway (Example~4).\\
+Spoofing & A2 tries to act as another task in the cluster. & Keys stay in the gateway; the proxy credential binds a connection to one task; optional source-address check.\\
+Tampering & Request body changed between gateway and relying party. & \code{content-digest} is covered by the signature; TLS on both legs.\\
+Tampering & Audit entries changed afterwards (A5). & Hash chain plus signed, published checkpoints.\\
+Repudiation & Principal claims ``my agent did not do that''. & Ledger links every request to passport, task, image, manifest and authenticated principal.\\
+Information disclosure & Relying parties learn who the principal is. & Pairwise pseudonymous principal identifiers when identity is not needed.\\
+Information disclosure & A2 exfiltrates workspace data to an attacker host. & Host allowlist at the gateway; unknown hosts are unreachable. (Exfiltration \emph{through} an allowed host remains possible; see below.)\\
+Denial of service & A2 floods relying parties or burns the model budget. & Rate limits and spend metering at the gateway; observer suspension (Example~3).\\
+Elevation of privilege & A1 makes the agent perform an action outside its mandate. & Visa enforced by verifier; step-up approvals for risky amounts; observer suspension (Example~2).\\
+Elevation of privilege & A sub-task gets more rights than its parent. & PA-enforced attenuation and budget reservation (Example~5).\\
+Elevation of privilege & A1 makes the agent write a persuasive justification so that the principal approves a harmful step-up. & The console separates verified facts (host, item, amount from the refused request) from the agent's justification, which is labelled as unverified; grants are bound to the exact request digest.\\
+Elevation of privilege & A4 grants overly broad visas. & Policy caps what any group can request; narrower requests are encouraged by templates; console shows the effective visa before launch.\\
+\bottomrule
+\end{tabularx}
+\caption{STRIDE analysis of AgentPassport.}
+\label{tab:stride}
+\end{table}
+
+\subsection{Residual risks and limitations}
+
+We state openly what the design does \emph{not} solve:
+
+\begin{itemize}
+  \item \textbf{Misuse within the mandate.} If the visa allows ordering up to 500~TRY at a shop, a hijacked agent can still place a bad order for 480~TRY. KYA bounds the \emph{blast radius}; it does not guarantee that every in-scope action matches the principal's intent. Tight visas, low approval thresholds and the observer reduce, but do not remove, this risk.
+  \item \textbf{Exfiltration through allowed channels.} An agent allowed to post reviews could hide stolen data in a review text. Content inspection is out of scope.
+  \item \textbf{Relying parties that do not verify.} The signature only helps services that check it. For others, the gateway's allowlist and metering still apply.
+  \item \textbf{Trusted gateway.} Because it terminates TLS and holds task keys, a compromised gateway is a serious incident. We mitigate with a minimal code base, keys in memory only, short passport lifetimes and separate deployment; hardware-backed key storage is future work.
+  \item \textbf{Egress enforcement depends on the platform.} If sandbox egress cannot be restricted to the gateway (Section~\ref{sec:seams}), a malicious agent could bypass it. The evaluation reports which mode was used.
+  \item \textbf{False positives.} An over-eager observer can suspend legitimate agents. Suspension (rather than deletion) keeps this recoverable; tuning is part of the evaluation.
+\end{itemize}

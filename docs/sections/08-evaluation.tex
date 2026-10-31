@@ -1,0 +1,77 @@
+\section{Evaluation plan}\label{sec:eval}
+
+We will evaluate AgentPassport both as a security mechanism and as a piece of infrastructure that people have to live with.
+
+\subsection{Research questions}
+
+\begin{description}[leftmargin=0pt,labelindent=0pt]
+  \item[RQ1 (Effectiveness)] Which fraction of attacks from our attack suite is blocked, and by which layer (gateway, verifier, observer)?
+  \item[RQ2 (Overhead)] How much latency and throughput cost do the gateway and verifier add per request, and how does the system scale with the number of concurrent tasks?
+  \item[RQ3 (Detection quality)] How accurately and how quickly does the trust observer separate hijacked or looping agents from normal ones? How many false alarms does it raise on benign workloads?
+  \item[RQ4 (Adoption effort)] How much work is it to protect an existing service and to run an existing agent under AgentPassport?
+\end{description}
+
+\subsection{Testbed}
+
+\begin{itemize}
+  \item \textbf{Cluster.} AX and Agent Substrate on a managed Kubernetes cluster (GKE, using education credits) with 3--5 worker nodes; a local \code{kind} cluster for development if Substrate supports it.
+  \item \textbf{Relying parties.} The demo shop (Spring Boot) and a mock payment API (Go), both with the verifier; a third service \emph{without} the verifier as a control.
+  \item \textbf{Agents.} (a) Scripted agents that replay recorded action sequences, for exact reproducibility; (b) LLM-driven agents (shopping, trip planning, coding) for realism.
+  \item \textbf{Benign workload.} At least 200 benign task runs across agent types to train the anomaly model and to measure false positives.
+\end{itemize}
+
+\subsection{Attack suite}
+
+We will build a reproducible suite of at least 30 attack scenarios in six families:
+
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{@{}L{3.6cm}Y@{}}
+\toprule
+\textbf{Family} & \textbf{Examples}\\
+\midrule
+Indirect prompt injection & Instructions hidden in product pages, reviews, search results and tool outputs, asking for transfers, extra orders or data exfiltration.\\
+Scope escalation & Calling actions or hosts outside the visa; exceeding per-request or total limits; splitting a large payment into many small ones.\\
+Impersonation and replay & Replaying captured requests; reusing passports with new bodies; forging passports; using an expired or revoked passport.\\
+Delegation abuse & Sub-tasks requesting more than the parent; exceeding depth; budget double-spending across siblings.\\
+Resource abuse & Tight retry loops; request floods; long-running token-burning conversations.\\
+Platform evasion & Direct connections bypassing the proxy variables; DNS tunnelling attempts; attempts to read keys from the sandbox.\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Configurations compared}
+
+\begin{enumerate}
+  \item \textbf{Baseline}: plain AX, agents use API keys directly.
+  \item \textbf{Gateway only}: allowlist and metering, no signatures.
+  \item \textbf{Gateway + verifier}: full KYA identity and authorization, no observer.
+  \item \textbf{Full AgentPassport}: all components.
+\end{enumerate}
+
+This ablation shows what each layer contributes.
+
+\subsection{Metrics and targets}
+
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{@{}lYL{3.4cm}@{}}
+\toprule
+\textbf{RQ} & \textbf{Metric} & \textbf{Target}\\
+\midrule
+RQ1 & Attacks blocked before causing harm (per family, per configuration) & $\ge$ 95\% of in-scope attacks in full config\\
+RQ1 & Layer that first stopped each attack & reported\\
+RQ2 & Added latency per request, gateway (p50 / p99) & $<$ 10~ms / $<$ 40~ms\\
+RQ2 & Verification time with cached keys (p50) & $<$ 2~ms\\
+RQ2 & Gateway throughput on one core & $\ge$ 2,000 signed req/s\\
+RQ2 & Admission overhead per \code{CreateTask} & $<$ 150~ms\\
+RQ3 & Detection rate of hijacked / looping tasks & $\ge$ 90\%\\
+RQ3 & False-positive suspensions per 100 benign runs & $\le$ 2\\
+RQ3 & Time from triggering event to suspension & $<$ 5~s\\
+RQ4 & Lines of code/config to protect a Spring Boot endpoint & $<$ 20\\
+RQ4 & Changes needed to an existing agent & none\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The targets are initial estimates; the final report will state measured values against them, including the ones we miss.
