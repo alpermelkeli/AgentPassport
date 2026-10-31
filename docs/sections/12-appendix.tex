@@ -14,7 +14,7 @@ Approval grant & Short-lived token, signed by the PA after a principal approves,
 Atespace & Agent Substrate's namespace for actors; AX tasks live in atespaces.\\
 Attenuation & Deriving a credential with fewer rights than the original; never more.\\
 AX & Google's declarative orchestrator for agent tasks, built on Agent Substrate.\\
-Egress gateway & Our forward proxy through which all sandbox traffic leaves the cluster; signs requests.\\
+AX gateway & AX's \code{Gateway} resource: a task's listeners and egress allowlist. We bind every task to \code{kya-egress-only}, which allows only the signing proxy.\\
 gVisor & A user-space kernel that isolates containers by intercepting their system calls.\\
 KYA & Know Your Agent: identifying agents, binding them to accountable principals, limiting and monitoring them.\\
 KYC & Know Your Customer: identity checks required of banks and other regulated businesses.\\
@@ -27,6 +27,7 @@ Prompt injection & Hiding instructions in content an LLM reads so that it follow
 Relying party & A service that receives agent requests and decides whether to serve them.\\
 RFC 9421 & The IETF standard for signing HTTP messages.\\
 Sandbox & The isolated environment in which one AX task runs.\\
+Signing proxy & Our forward proxy through which all sandbox traffic leaves the cluster; enforces the visa's hosts and signs requests. Called ``egress gateway'' in drafts up to v0.2.\\
 SPIFFE ID & A standard URI naming a workload, e.g.\ \code{spiffe://kya.dev/ns/default/task/shop-7f3a}.\\
 Step-up & Requiring additional approval from the principal before a risky request is served.\\
 Task & AX's unit of isolated agent execution.\\
@@ -55,8 +56,9 @@ Workspace & AX resource describing repositories, tools and skills prepared for a
 \code{kya.ver} & Version of the AgentPassport claim format.\\
 \code{kya.task.atespace}, \code{.name} & Location of the task in AX.\\
 \code{kya.task.image} & Digest of the container image running the agent.\\
-\code{kya.task.manifest} & Hash of the canonical task and workspace specification.\\
-\code{kya.task.model} & Model the task is configured to use.\\
+\code{kya.task.manifest} & Hash of the canonical task, workspace and gateway specification.\\
+\code{kya.task.gateway} & Name of the AX gateway the task is bound to (normally \code{kya-egress-only}).\\
+\code{kya.task.model} & Model the task is configured to use (from the AX \code{Model} resource).\\
 \code{kya.principal.sub} & Stable identifier (or pairwise pseudonym) of the accountable person.\\
 \code{kya.principal.idp}, \code{.auth\_time}, \code{.org} & Identity provider, login time, organisation or group.\\
 \code{kya.visa.hosts} & Hosts the agent may reach.\\

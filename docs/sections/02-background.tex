@@ -206,8 +206,8 @@ We deliberately build on existing, well-specified mechanisms instead of inventin
 \textbf{Standard / technique} & \textbf{What it is} & \textbf{Used in}\\
 \midrule
 JWT / JWS (RFC 7519, 7515) & Signed JSON tokens with standard claims (\code{iss}, \code{sub}, \code{exp}, \ldots). & Passport format\\
-Proof of possession, \code{cnf} (RFC 7800) and JWK thumbprint (RFC 7638) & Binds a token to a key, so a stolen token is useless without the key. & Passport $\leftrightarrow$ gateway key\\
-HTTP Message Signatures (RFC 9421)~\cite{rfc9421} & Signs selected parts of an HTTP request (method, authority, path, headers). & Egress gateway, verifier\\
+Proof of possession, \code{cnf} (RFC 7800) and JWK thumbprint (RFC 7638) & Binds a token to a key, so a stolen token is useless without the key. & Passport $\leftrightarrow$ signing-proxy key\\
+HTTP Message Signatures (RFC 9421)~\cite{rfc9421} & Signs selected parts of an HTTP request (method, authority, path, headers). & Signing proxy, verifier\\
 Digest fields (RFC 9530) & \code{Content-Digest} header carrying a hash of the body. & Body integrity\\
 Web Bot Auth (IETF drafts)~\cite{webbotauth} & Profile of RFC 9421 for identifying automated clients, with a \code{Signature-Agent} header pointing to a key directory. & Signature profile\\
 SPIFFE / SVID~\cite{spiffe} & Standard format for workload identities (\code{spiffe://trust-domain/path}). & Agent identifier\\
