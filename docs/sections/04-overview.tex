@@ -74,10 +74,19 @@ Inside the sandbox & Runner contract; \codeurl{github.com/google/ax/runner} pack
 Network path out & \code{Gateway} resource (\code{spec.gateway}, egress allowlist), applied by \code{ax-controller} and enforced by Agent Substrate & Every task is bound to the operator-owned gateway \code{kya-egress-only}, whose allowlist contains only the signing proxy.\\
 Emergency brake & \code{SuspendTask} / \code{DeleteTask} RPCs & Trust observer suspends tasks automatically.\\
 Discovery & \code{GetTask}, \code{WatchTask} RPCs & Observer and console follow task lifecycle.\\
+Future native features & AX roadmap: SPIFFE SVIDs, OpenTelemetry, swappable gateway, task budgets and approval policies & Replace the proxy credential with the task's SVID; feed AX telemetry to the observer; offer the signing proxy as a gateway implementation; keep our visa and approvals for what relying parties must verify.\\
 \bottomrule
 \end{tabularx}
 \end{center}
 
 \begin{warnbox}[Assumption to verify early]
 Forcing \emph{all} sandbox egress through the signing proxy relies on AX's \code{Gateway} resource. In the first weeks we will verify that a task bound to \code{kya-egress-only} reaches the signing proxy and nothing else, and that its \code{GatewayReady} condition reflects this. Continuous reconciliation of gateway changes is still on the AX roadmap, so we never change \code{kya-egress-only} while tasks are running. As a fallback for the prototype, the KYA runner sets \code{HTTP\_PROXY}/\code{HTTPS\_PROXY}, which is enough for cooperative agents but not for a malicious one; the evaluation will state clearly which mode was used.
+\end{warnbox}
+
+\begin{warnbox}[Costs of the AX integration we accept]
+\begin{itemize}
+  \item \textbf{Actor templates.} AX creates one Agent Substrate actor template per distinct image and environment~\cite{ax-runner}. Because every task gets its own proxy credential in \code{spec.env}, every task gets its own template, which may reduce density and slow start-up. We measure this (RQ2) and remove the cost once task identities come from SPIFFE.
+  \item \textbf{Debug access.} \code{ax ssh} requires \code{spec.debug}, which enables arbitrary process execution inside the sandbox. Policy reserves it for operators; principals investigate through the audit trail.
+  \item \textbf{Bootstrap key.} AX's workspace setup agents need a model API key inside the container~\cite{ax-sandbox}. Until AX moves setup into a separate actor, this key is the one secret in the sandbox that AgentPassport does not control.
+\end{itemize}
 \end{warnbox}

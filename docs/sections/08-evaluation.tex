@@ -6,7 +6,7 @@ We will evaluate AgentPassport both as a security mechanism and as a piece of in
 
 \begin{description}[leftmargin=0pt,labelindent=0pt]
   \item[RQ1 (Effectiveness)] Which fraction of attacks from our attack suite is blocked, and by which layer (AX gateway, signing proxy, verifier, observer)?
-  \item[RQ2 (Overhead)] How much latency and throughput cost do the signing proxy and verifier add per request, and how does the system scale with the number of concurrent tasks?
+  \item[RQ2 (Overhead)] How much latency and throughput cost do the signing proxy and verifier add per request, how does the system scale with the number of concurrent tasks, and what does a per-task environment cost AX in actor density and start-up time?
   \item[RQ3 (Detection quality)] How accurately and how quickly does the trust observer separate hijacked or looping agents from normal ones? How many false alarms does it raise on benign workloads?
   \item[RQ4 (Adoption effort)] How much work is it to protect an existing service and to run an existing agent under AgentPassport?
 \end{description}
@@ -65,6 +65,7 @@ RQ2 & Added latency per request, signing proxy (p50 / p99) & $<$ 10~ms / $<$ 40~
 RQ2 & Verification time with cached keys (p50) & $<$ 2~ms\\
 RQ2 & Signing-proxy throughput on one core & $\ge$ 2,000 signed req/s\\
 RQ2 & Admission overhead per \code{UpdateTask} & $<$ 150~ms\\
+RQ2 & Task start-up time and actor density with vs.\ without per-task environment & reported\\
 RQ3 & Detection rate of hijacked / looping tasks & $\ge$ 90\%\\
 RQ3 & False-positive suspensions per 100 benign runs & $\le$ 2\\
 RQ3 & Time from triggering event to suspension & $<$ 5~s\\

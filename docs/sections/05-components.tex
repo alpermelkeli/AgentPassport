@@ -363,6 +363,8 @@ While waiting, the agent can tell its own user what it is waiting for, or contin
 
 \paragraph{5. The agent acts on the decision.} If approved, the PA issues a short-lived \textbf{approval grant} (five minutes), a signed token bound to the exact request digest, similar in spirit to the user-signed ``mandates'' of the Agent Payments Protocol~\cite{ap2}. The agent sends \emph{the same request again}; the signing proxy finds a grant whose digest matches, attaches it in a \code{KYA-Approval} header, and the verifier accepts the request after checking the grant's signature and digest. If the agent changes anything (item, quantity, amount), the digest no longer matches and a new approval is needed. If rejected, the agent receives the rejection and the note, and can adapt its plan.
 
+\paragraph{Relation to AX's planned approval policies.} The AX roadmap adds approval policies and token/timeout budgets to the \code{Task} spec. Those control the platform from the inside. Our approvals are different in one important way: the relying party can verify them, because the grant is signed by the PA and bound to the exact request. If AX ships native approvals, the console can use them as the notification channel while keeping the signed grant.
+
 \paragraph{Interaction with the trust observer.} An \code{approval-required} answer is not a violation: the agent is doing exactly what the rules ask. It therefore carries no trust penalty. Only abuse of the mechanism is penalised, for example opening many approvals for slightly different requests in a short time, which would amount to spamming the principal.
 
 %-----------------------------------------------------------------
@@ -381,7 +383,7 @@ Figure~\ref{fig:observer} shows the pipeline from raw signals to actions.
 
 \subsubsection{Signals and features}
 
-Signals arrive as events (JSON over a message queue; OpenTelemetry-compatible attributes). For each task, the observer maintains sliding-window features, including: request rate relative to the task's own recent baseline, ratio of denied requests, number of never-before-seen hosts and action types for this image, spend velocity relative to the remaining budget, and a repetition index (how often the last $k$ requests repeat the same method, path and body hash, which detects loops).
+Signals arrive as events (JSON over a message queue; OpenTelemetry-compatible attributes) from the signing proxy, the KYA runner and the verifiers, plus lifecycle transitions from AX's \code{WatchTask}. When AX ships its planned runner- and gateway-level telemetry, it can replace the runner's own event reporting. For each task, the observer maintains sliding-window features, including: request rate relative to the task's own recent baseline, ratio of denied requests, number of never-before-seen hosts and action types for this image, spend velocity relative to the remaining budget, and a repetition index (how often the last $k$ requests repeat the same method, path and body hash, which detects loops).
 
 \subsubsection{Score}
 
@@ -408,7 +410,7 @@ Rules make the observer predictable and explainable (every penalty appears in th
 \midrule
 $s \ge 0.6$ & Normal operation.\\
 $0.4 \le s < 0.6$ & Step-up: every state-changing request needs principal approval; the PA may issue a narrower replacement passport (for example, read-only actions).\\
-$s < 0.4$ & Call \code{SuspendTask} on AX, revoke the passport, notify the principal. The suspended task keeps its memory and workspace, so an operator can inspect it (\code{ax ssh}) and resume it if it was a false alarm.\\
+$s < 0.4$ & Call \code{SuspendTask} on AX, revoke the passport, notify the principal. The suspended task keeps its memory and workspace, so it can be resumed if it was a false alarm. Interactive inspection with \code{ax ssh} is only possible for tasks started with \code{spec.debug}.\\
 \bottomrule
 \end{tabularx}
 \end{center}

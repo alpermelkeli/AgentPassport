@@ -73,7 +73,7 @@ A bug makes the agent retry a failing order endlessly: the shop answers \code{40
   \item The \textbf{signing proxy} forwards each request, and the verifier allows each one (it is a valid \code{order.create} of 180~TRY), but the shop keeps refusing it.
   \item In the \textbf{observer}, the repetition index for this task climbs to 0.97 (almost every recent request identical) and the request rate is 30 times the task's own baseline. No single rule fires, but the anomaly score $a_t$ is 0.93, far above the tolerance $\tau$.
   \item Within about 20 seconds the score drops into the step-up band (further orders need Alper's approval), and shortly after below 0.4. The task is suspended, not deleted.
-  \item Alper opens the console, sees ``suspended: repetitive requests (412 identical \code{POST /api/orders} in 2 minutes)'', inspects the sandbox with \code{ax ssh}, fixes the agent, and deletes the task.
+  \item Alper opens the console, sees ``suspended: repetitive requests (412 identical \code{POST /api/orders} in 2 minutes)'' with the full event trail, reproduces the bug locally, fixes the agent, and deletes the task. (Interactive inspection with \code{ax ssh} would need \code{spec.debug}, which the policy reserves for operators.)
 \end{itemize}
 
 Without AgentPassport, this agent would keep calling the shop \emph{and} the LLM API until someone noticed the bill; this is the ``burning money in a loop'' problem the AX authors mention~\cite{ax}.

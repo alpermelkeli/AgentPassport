@@ -64,7 +64,7 @@ Elevation of privilege & A4 grants overly broad visas. & Policy caps what any gr
 \label{tab:stride}
 \end{table}
 
-\subsection{Residual risks and limitations}
+\subsection{Residual risks and limitations}\label{sec:residual}
 
 We state openly what the design does \emph{not} solve:
 
@@ -74,5 +74,7 @@ We state openly what the design does \emph{not} solve:
   \item \textbf{Relying parties that do not verify.} The signature only helps services that check it. For others, the signing proxy's allowlist and metering still apply.
   \item \textbf{Trusted signing proxy.} Because it terminates TLS and holds task keys, a compromised signing proxy is a serious incident. We mitigate with a minimal code base, keys in memory only, short passport lifetimes and separate deployment; hardware-backed key storage is future work.
   \item \textbf{Egress enforcement depends on the platform.} If AX's gateway does not restrict sandbox egress to the signing proxy reliably (Section~\ref{sec:seams}), a malicious agent could bypass the proxy. Continuous gateway reconciliation is still on the AX roadmap. The evaluation reports which mode was used.
+  \item \textbf{A secret AX places in the sandbox.} AX's workspace setup agents need a model API key inside the container~\cite{ax-sandbox}. A compromised agent could read it and use it through the signing proxy, where it is metered and attributed, but it could also leak it through an allowed host. Moving this key out of the sandbox depends on AX (separate setup actor, on its roadmap) or on credential injection in the signing proxy (stretch goal).
+  \item \textbf{A moving upstream target.} AX is pre-1.0. Calls we depend on (\code{UpdateTask}, \code{SuspendTask}, the runner contract, the \code{Gateway} resource) may change. We pin one AX version and keep AX-specific code in thin adapters (Section~\ref{sec:plan}).
   \item \textbf{False positives.} An over-eager observer can suspend legitimate agents. Suspension (rather than deletion) keeps this recoverable; tuning is part of the evaluation.
 \end{itemize}
