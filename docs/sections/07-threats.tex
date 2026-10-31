@@ -12,7 +12,7 @@
 
 \subsection{Trust assumptions}
 
-We assume the following components are \emph{trusted} and correctly deployed: the Kubernetes control plane, Agent Substrate's isolation (gVisor or microVM), \code{ax-server}, and our own admission proxy, passport authority, egress gateway, observer and ledger. We assume the university OIDC provider authenticates people correctly. Standard cryptography (Ed25519, SHA-256, TLS~1.3) is assumed to be secure.
+We assume the following components are \emph{trusted} and correctly deployed: the Kubernetes control plane, Agent Substrate's isolation (gVisor or microVM), \code{ax-server}, \code{ax-controller}, and our own admission proxy, passport authority, egress gateway, observer and ledger. We assume the university OIDC provider authenticates people correctly. Standard cryptography (Ed25519, SHA-256, TLS~1.3) is assumed to be secure.
 
 We assume nothing about the \emph{agent}: its code, its model, its inputs and everything else inside the sandbox may be malicious at any time.
 
@@ -44,8 +44,10 @@ Table~\ref{tab:stride} lists threats grouped by the STRIDE categories.
 \textbf{Category} & \textbf{Threat} & \textbf{Mitigation}\\
 \midrule
 Spoofing & A3 sends requests pretending to be a legitimate agent. & Requests must carry a PA-signed passport and a fresh signature with the key in \code{cnf}; neither can be produced outside the gateway (Example~4).\\
+Spoofing & A principal or A2 calls \code{ax-server} directly to launch a task without a passport check. & NetworkPolicy: only the admission proxy and \code{ax-controller} can reach \code{ax-server}.\\
 Spoofing & A2 tries to act as another task in the cluster. & Keys stay in the gateway; the proxy credential binds a connection to one task; optional source-address check.\\
 Tampering & Request body changed between gateway and relying party. & \code{content-digest} is covered by the signature; TLS on both legs.\\
+Tampering & A principal changes a running task, or a workspace it uses, after the passport was issued. & Updates go through the admission proxy; a changed manifest hash requires a new passport; referenced workspaces are locked while tasks run; gateways and models are operator-only.\\
 Tampering & Audit entries changed afterwards (A5). & Hash chain plus signed, published checkpoints.\\
 Repudiation & Principal claims ``my agent did not do that''. & Ledger links every request to passport, task, image, manifest and authenticated principal.\\
 Information disclosure & Relying parties learn who the principal is. & Pairwise pseudonymous principal identifiers when identity is not needed.\\

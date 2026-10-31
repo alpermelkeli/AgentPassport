@@ -21,9 +21,9 @@ Figure~\ref{fig:arch} (printed in landscape after this section's text) shows all
 
 \begin{enumerate}[label=\protect\circled{\arabic*},leftmargin=2em]
   \item The principal logs in with the university OIDC provider (browser or device-code flow from the terminal) and obtains an ID token.
-  \item The principal runs \code{ax apply -f task.yaml}. The CLI is configured with \code{--server} pointing to our \comp{admission proxy}, and the ID token is sent as gRPC metadata.
+  \item The principal runs \code{ax apply -f task.yaml}. The CLI is configured with \code{--server} (or \code{AX\_SERVER}) pointing to our \comp{admission proxy}, and the ID token is sent as gRPC metadata. The CLI sends the task as an \code{UpdateTask} call, which AX uses both to create and to update tasks.
   \item The admission proxy checks the task against the \comp{policy store} and asks the \comp{passport authority} (PA) to issue a passport. The PA also creates a fresh signing key pair for the task.
-  \item The proxy forwards the (slightly modified) \code{CreateTask} call to the real \code{ax-server}. The modification: the image is switched to our KYA runner image if needed, and environment variables pointing at the egress gateway are added.
+  \item The proxy forwards the (slightly modified) \code{UpdateTask} call to the real \code{ax-server}. The modification: the image is switched to our KYA runner image if needed, and environment variables pointing at the egress gateway are added.
   \item AX and Agent Substrate create the sandbox as usual. The \comp{KYA runner} (our build of \code{ax-task-runner}) starts, prepares the workspace, and launches the agent with all traffic routed through the gateway.
   \item Every outbound HTTP request of the agent reaches the \comp{egress gateway}.
   \item The gateway checks the allowlist, attaches the passport, signs the request with the task's key, and forwards it to the relying party, where the \comp{KYA verifier} middleware checks it before the application sees it. Calls to LLM and MCP endpoints in the visa are forwarded (and metered) too.
@@ -68,7 +68,8 @@ Because AX is young and changing, the integration points are kept narrow and exp
 \toprule
 \textbf{Seam} & \textbf{AX feature used} & \textbf{What we do there}\\
 \midrule
-API front door & \code{ax --server}; gRPC service \code{ax.v1alpha1.AX} & Admission proxy implements the same gRPC service, authenticates, checks policy, forwards to \code{ax-server}.\\
+API front door & \code{ax --server} or \code{AX\_SERVER}; gRPC service \code{ax.v1alpha1.AX} (\code{UpdateTask}; \code{Update}/\code{Delete} for gateways, workspaces, models) & Admission proxy implements the same gRPC service, authenticates, checks policy, forwards to \code{ax-server}. Changes to gateways, workspaces and models are restricted by policy (Section~\ref{sec:admission}).\\
+Control-plane access & Kubernetes NetworkPolicy on \code{ax-server} & Only the admission proxy and \code{ax-controller} can reach \code{ax-server}, so the proxy cannot be bypassed.\\
 Inside the sandbox & Runner contract; \codeurl{github.com/google/ax/runner} package; \code{spec.image} & KYA runner = default runner + proxy environment + trust bundle + event reporting.\\
 Network path out & Substrate egress controls, Kubernetes NetworkPolicy & Only the egress gateway is reachable from sandboxes.\\
 Emergency brake & \code{SuspendTask} / \code{DeleteTask} RPCs & Trust observer suspends tasks automatically.\\

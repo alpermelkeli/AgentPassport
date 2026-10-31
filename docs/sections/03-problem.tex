@@ -45,7 +45,7 @@ Sub-agents & Tasks may spawn tasks. & A child could get more power than its pare
 \textbf{ID} & \textbf{Requirement}\\
 \midrule
 FR1 & A task can only be created by an authenticated principal; the principal's identity is recorded with the task.\\
-FR2 & Every task creation is checked against policy (allowed images, models, hosts, actions, limits) and rejected with a clear reason if it violates it.\\
+FR2 & Every task creation or update is checked against policy (allowed images, models, hosts, actions, limits) and rejected with a clear reason if it violates it.\\
 FR3 & Every admitted task receives a signed passport describing its identity, principal, visa and validity.\\
 FR4 & All outbound network traffic from a task passes through the egress gateway; traffic to hosts outside the visa is blocked.\\
 FR5 & Every request to a relying party carries the passport and an RFC~9421 signature produced by a key that never enters the sandbox.\\

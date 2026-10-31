@@ -12,6 +12,7 @@ We reuse the university's existing OpenID Connect (OIDC) provider rather than bu
 \begin{lstlisting}[language=bash]
 kya login                                  # once per day; opens university SSO
 ax --server kya-admission.kya-system:8080 apply -f task.yaml
+# or once per shell: export AX_SERVER=kya-admission.kya-system:8080
 \end{lstlisting}
 
 The admission proxy validates the token (signature, issuer, audience, expiry) and extracts the principal's stable identifier (\code{sub}), e-mail and group memberships. These become the \code{principal} block of the passport. For the demo we also support a local development identity provider (e.g.\ Keycloak or Dex) so the system can run without university infrastructure.
@@ -37,6 +38,8 @@ spec:
     allow: ["ghcr.io/example/shopping-agent@sha256:*"]  # pinned digests only
   models:
     allow: ["anthropic/claude-*", "google/gemini-*"]
+  tasks:
+    allowDebug: false         # spec.debug (ax ssh) is for operators only
   passport:
     ttl: 2h                   # passports expire quickly
     maxDelegationDepth: 2     # task -> sub-task -> sub-sub-task
@@ -59,21 +62,32 @@ A task may ask for \emph{less} than the policy allows by including an environmen
 \textbf{Actions} are names chosen by relying parties (\code{order.create}, \code{payments.pay}, \ldots). A relying party publishes which HTTP routes correspond to which action names; the verifier SDK maps routes to actions (Section~\ref{sec:verifier}). The gateway only knows hosts; actions and amounts are enforced by the verifier, which sees the application-level meaning of a request.
 
 %-----------------------------------------------------------------
-\subsection{Admission proxy}
+\subsection{Admission proxy}\label{sec:admission}
 
 \textbf{Responsibility:} be the only entry point to \code{ax-server}; authenticate, check policy, request a passport, adjust the task, and forward it.
 
-The admission proxy is a Go service that implements the \code{ax.v1alpha1.AX} gRPC service using the generated types from \codeurl{github.com/google/ax/pkg/apis/v1alpha1}. Read-only calls (\code{GetTask}, \code{ListTasks}, \code{WatchTask}) are forwarded after authentication, filtered so that principals only see their own tasks. \code{CreateTask} goes through the following pipeline:
+The admission proxy is a Go service that implements the \code{ax.v1alpha1.AX} gRPC service using the generated types from \codeurl{github.com/google/ax/pkg/apis/v1alpha1}. Read-only calls (\code{GetTask}, \code{ListTasks}, \code{WatchTask}) are forwarded after authentication, filtered so that principals only see their own tasks. AX has no separate create call: \code{UpdateTask} creates a task or updates an existing one. Every \code{UpdateTask} goes through the following pipeline:
 
 \begin{enumerate}
   \item \textbf{Authenticate} the ID token; reject with \code{UNAUTHENTICATED} if missing or invalid.
   \item \textbf{Find the applicable policy} by the principal's groups.
-  \item \textbf{Validate} the image (must be a pinned digest matching \code{images.allow}), the model, resource limits and the requested visa. Reject with \code{PERMISSION\_DENIED} and a human-readable reason otherwise, e.g.\ \emph{``image tag :latest is not allowed; pin a digest''}.
-  \item \textbf{Compute the manifest hash}: SHA-256 over a canonical serialisation of the task spec and its bound workspaces. Any change to the task (command, environment, repositories) changes the hash and therefore the passport.
+  \item \textbf{Create or update?} If a task with this name already exists, the call is an update. Only the principal who launched the task may update it, and an update that changes the manifest hash (step~5) is treated like a new launch: it needs a new passport, and the old one is revoked.
+  \item \textbf{Validate} the image (must be a pinned digest matching \code{images.allow}), the model, resource limits, the debug flag (\code{spec.debug} only if \code{tasks.allowDebug}) and the requested visa. Reject with \code{PERMISSION\_DENIED} and a human-readable reason otherwise, e.g.\ \emph{``image tag :latest is not allowed; pin a digest''}.
+  \item \textbf{Compute the manifest hash}: SHA-256 over a canonical serialisation of the task spec and the workspaces and gateway it references. Any change to the task (command, environment, repositories, network rules) changes the hash and therefore the passport.
   \item \textbf{Request a passport} from the passport authority with task identity, principal, effective visa and TTL.
   \item \textbf{Adjust the task}: set \code{spec.image} to the KYA runner variant of the requested image (a thin layer on top that replaces \codeurl{/usr/local/bin/ax-task-runner}); add environment entries \code{HTTPS\_PROXY}, \code{HTTP\_PROXY} (with a per-task proxy credential), \code{KYA\_PASSPORT\_ID} and \code{KYA\_EVENTS\_URL}.
-  \item \textbf{Forward} the call to \code{ax-server}, record \code{task.created} and \code{passport.issued} in the audit ledger, and return AX's response unchanged.
+  \item \textbf{Forward} the call to \code{ax-server}, record \code{task.created} (or \code{task.updated}) and \code{passport.issued} in the audit ledger, and return AX's response unchanged.
 \end{enumerate}
+
+A task refers to its workspaces and gateway \emph{by name}, so the resources it points to must be protected too. The proxy therefore also handles the other write calls of the AX API:
+
+\begin{itemize}
+  \item \code{UpdateGateway} and \code{DeleteGateway} are reserved for platform operators; principals cannot change the network rules of any task.
+  \item \code{UpdateModel} and \code{DeleteModel} are reserved for platform operators, because a model resource carries the reference to the provider's API key.
+  \item \code{UpdateWorkspace} is allowed for a principal's own workspaces, but rejected while a running task references the workspace, because the change would silently alter what that task's passport describes.
+\end{itemize}
+
+Finally, a Kubernetes NetworkPolicy allows only the admission proxy and \code{ax-controller} to connect to \code{ax-server}. Without it, anyone who can reach \code{ax-server} directly could bypass every check above.
 
 \begin{example}[A rejected launch]
 A student applies a task whose image is \code{ghcr.io/example/shopping-agent:latest} and whose requested visa includes \code{payments.pay}. The proxy answers:
@@ -418,7 +432,7 @@ AX expects agents to break work into trees of tasks~\cite{ax-concepts}. Without 
   \label{fig:delegation}
 \end{figure}
 
-When an agent creates a sub-task, its \code{CreateTask} call also goes through the admission proxy (the only path to \code{ax-server}), authenticated by the parent's proxy credential. The proxy calls \code{:delegate} on the PA, which checks that
+When an agent creates a sub-task, its \code{UpdateTask} call also goes through the admission proxy (the only path to \code{ax-server}), authenticated by the parent's proxy credential. The proxy calls \code{:delegate} on the PA, which checks that
 \begin{itemize}
   \item the requested hosts and actions are a subset of the parent's;
   \item every limit is at most the parent's remaining budget, which is then reserved;
@@ -442,7 +456,7 @@ The ledger is an append-only table in PostgreSQL. Each entry contains its sequen
   \label{fig:audit}
 \end{figure}
 
-{\raggedright Events recorded include \code{task.created}, \code{task.rejected}, \code{passport.issued}, \code{passport.revoked}, \code{egress.denied}, \code{request.allowed}, \code{request.denied}, \code{approval.requested}, \code{approval.granted}, \code{trust.changed} and \code{task.suspended}.\par}
+{\raggedright Events recorded include \code{task.created}, \code{task.updated}, \code{task.rejected}, \code{passport.issued}, \code{passport.revoked}, \code{egress.denied}, \code{request.allowed}, \code{request.denied}, \code{approval.requested}, \code{approval.granted}, \code{trust.changed} and \code{task.suspended}.\par}
 
 %-----------------------------------------------------------------
 \subsection{Console}

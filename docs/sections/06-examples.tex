@@ -23,8 +23,8 @@ Alper wants an agent to ``buy two USB-C cables for under 200~TRY''. He writes th
 \toprule
 \textbf{\#} & \textbf{Component} & \textbf{What happens}\\
 \midrule
-1 & Principal & \code{kya login}, then \code{ax apply -f task.yaml}. The ID token says \code{sub=alper@cs.example.edu}, group \code{hacettepe-cs/design-team}.\\
-2 & Admission proxy & Policy \code{students-shopping} applies. Image is pinned; model allowed. Effective visa = policy $\cap$ request: \code{catalog.read}, \code{order.create} up to 200~TRY per request (total 1000~TRY). Manifest hash \code{sha256:91be\ldots}.\\
+1 & Principal & \code{kya login}, then \code{ax apply -f task.yaml}, which reaches the admission proxy as \code{UpdateTask}. The ID token says \code{sub=alper@cs.example.edu}, group \code{hacettepe-cs/design-team}.\\
+2 & Admission proxy & Policy \code{students-shopping} applies. New task (no existing \code{shop-7f3a}). Image is pinned; model allowed; debug off. Effective visa = policy $\cap$ request: \code{catalog.read}, \code{order.create} up to 200~TRY per request (total 1000~TRY). Manifest hash \code{sha256:91be\ldots}.\\
 3 & Passport authority & Issues \code{pp\_01J9ZK4Q7M}, valid 09:12--11:12, with task key \code{k-7f3a}, and hands the private key to the gateway. (It looks like Figure~\ref{fig:passport}, except that the per-order limit is 200~TRY because of the narrower request.)\\
 4 & AX & Creates task \code{shop-7f3a}; Substrate starts the sandbox; the KYA runner prepares \code{/workspace} and starts \code{agent.py}.\\
 5 & Agent $\rightarrow$ gateway & \code{GET https://shop.example.com/api/products?q=usb-c}. Host allowed; request signed; forwarded.\\
