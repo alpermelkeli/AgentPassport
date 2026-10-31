@@ -16,6 +16,10 @@ Proposal and system design, before implementation. This is a graduation project 
 - LaTeX source: [`docs/main.tex`](docs/main.tex) and [`docs/sections/`](docs/sections/)
 - Figures: [`docs/figures/`](docs/figures/)
 
+## Project proposal
+
+[`docs/proposal/project_proposal.md`](docs/proposal/project_proposal.md) answers the five sections of the university's project proposal form (summary, problem definition and literature review, solution plan, methodology, outcome and impact). It reuses the figures in `docs/figures/` and follows the figure numbering of the design document.
+
 To build the PDF, run XeLaTeX from `docs/`. The fonts Bitstream Charter, Liberation Sans and DejaVu Sans Mono must be installed.
 
 ```sh
