@@ -8,7 +8,7 @@ AgentPassport gives every AX task a verifiable passport, signs its outbound requ
 
 ## Status
 
-Proposal and system design, before implementation. This is a graduation project at Hacettepe University, Department of Computer Engineering. The repository currently holds the design document (Draft v0.2, September 2026).
+Proposal and system design, before implementation. This is a graduation project at Hacettepe University, Department of Computer Engineering. The repository currently holds the design document (Draft v0.3, October 2026), aligned with Google AX release v0.3.0, and the project proposal.
 
 ## Design document
 
