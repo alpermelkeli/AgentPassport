@@ -1,11 +1,11 @@
 # AgentPassport: A Know-Your-Agent Trust Layer for Autonomous Agents on Google AX
 
 **Project Proposal** · Hacettepe University, Department of Computer Engineering
-Team: [team member names] · Advisor: [advisor name]
+Team: Ömer Burak Taşkın, Alper Melkeli, Yiğit Mete Tuygun, Fikret Kerem Dinçer · Advisor: [advisor name]
 
 > Proposal form answers, based on the [design document](../AgentPassport_Design_Document.pdf) (Draft v0.3).
 > Aligned with Google AX release v0.3.0 and `main` (`ax.io/v1alpha1`), checked October 2026.
-> Figure numbers match the design document; image files live in [`../figures/`](../figures/).
+> Figures are taken from the design document; image files live in [`../figures/`](../figures/).
 
 ## Contents
 
@@ -28,16 +28,16 @@ Team: [team member names] · Advisor: [advisor name]
 
 Banks solved a similar problem for people with Know Your Customer (KYC). The emerging Know Your Agent (KYA) idea applies it to software agents, but no open implementation tied to a real agent platform exists.
 
-![Figure 4: The four pillars of Know Your Agent, the everyday analogy for each, and how AgentPassport implements it.](../figures/kya_pillars.png)
+![Figure 1: The four pillars of Know Your Agent, the everyday analogy for each, and how AgentPassport implements it.](../figures/kya_pillars.png)
 
-*Figure 4: The four pillars of Know Your Agent, the everyday analogy for each, and how AgentPassport implements it.*
+*Figure 1: The four pillars of Know Your Agent, the everyday analogy for each, and how AgentPassport implements it.*
 
 **Solution plan.** We will design, implement and evaluate AgentPassport, a KYA layer that runs next to AX without forking it, using only AX's documented extension points:
 
 - An **admission proxy** in front of the AX API authenticates the launching person (university SSO) and checks every task against policy.
 - A **passport authority** issues each task a short-lived, revocable passport (a signed JWT). The passport names the agent, its accountable principal and a "visa" of allowed hosts, actions and spending limits.
 - Using AX's own Gateway resource, each sandbox may reach only one destination: our **KYA signing proxy**. The proxy enforces the visa and signs every outbound request (RFC 9421) with a per-task key that never enters the sandbox.
-- A **verifier SDK** for Spring Boot and Go lets third-party services check these requests in a few lines of code and ask for human approval on risky actions. The platform, not the service, contacts the human, and the agent is told explicitly that it must wait.
+- A **verifier SDK** for Spring Boot and Go lets third-party services check these requests in a few lines of code and ask for human approval on risky actions.
 - A **trust observer** combines rule penalties with an isolation-forest anomaly score into a per-task trust score. When it drops, the task is suspended through AX and its passport revoked.
 - Delegation chains, a tamper-evident audit ledger and a web console complete the system.
 
@@ -47,7 +47,7 @@ Banks solved a similar problem for people with Know Your Customer (KYC). The eme
 - add under 10 ms median latency per request;
 - suspend a hijacked agent within 5 seconds.
 
-In practice, a prompt-injected agent trying to transfer 9,000 TRY is blocked twice and suspended within seconds, a looping agent is stopped before it burns its budget, and a stolen passport is useless. Because the design follows AX's roadmap, parts of it can be adopted upstream. It also gives a measurable answer to a new question: how should an agent introduce itself, and how should the world check?
+In our demo scenarios, a prompt-injected payment is rejected twice (by the signing proxy and the verifier) and the agent is suspended; a looping agent is stopped before it exhausts its budget; and a stolen passport is useless, because only the signing proxy holds the signing key. Parts of the design follow AX's roadmap and can be contributed upstream.
 
 ---
 
@@ -68,7 +68,7 @@ cryptographically, without trusting the agent or the network. The decision must 
 3. **Authorization:** is rᵢ inside an explicit, human-approved scope (hosts, actions, amounts, time)?
 4. **Behaviour:** is T still behaving normally, or has it been hijacked or stuck in a loop?
 
-In addition, the platform must bound damage. If the trust score s(T) of a task falls below a threshold θ, T must be suspended within a bounded time Δ (target Δ < 5 s).
+In addition, the platform must bound damage. If the trust score s(T) of a task (a value in [0, 1] computed from its runtime behaviour, see S5) falls below a threshold θ, T must be suspended within a bounded time Δ (target Δ < 5 s).
 
 ### 2.2 Context
 
@@ -137,11 +137,14 @@ AX's roadmap lists the following as planned work [3]: SPIFFE identities for task
 
 ### 2.6 Literature review
 
-- **Know Your Agent.** There is no single KYA standard yet. Identity-verification and payment companies publish their own versions [4–6]. Across them, four pillars recur: identity, principal binding, authorization, and behaviour/reputation. Existing products target finance and full document-based identity checks. None provides an open implementation integrated with an agent orchestrator.
-- **Request signing and agent identity.** HTTP Message Signatures (RFC 9421) [7] sign selected parts of a request. The IETF Web Bot Auth drafts [8] profile RFC 9421 for automated clients. Proof-of-possession semantics (RFC 7800) [9] bind a token to a key, so a stolen token is useless without that key. SPIFFE [10] defines a standard URI format for workload identities; AX plans to adopt it [3].
-- **Human login and delegation.** The OAuth 2.0 device grant (RFC 8628) [11] allows SSO login from a terminal. OAuth Token Exchange (RFC 8693) [12] and Biscuit tokens [13] support attenuated (narrowed) delegation.
-- **Agent payments.** Google's Agent Payments Protocol (AP2) [14] uses user-signed mandates; this inspires our step-up approvals.
-- **Attacks on agents.** Indirect prompt injection hides instructions in content the agent reads [15, 16]. Because the model cannot reliably separate data from instructions, text-level detection is unreliable. We therefore limit what the agent can *do*, not what it *thinks*.
+- **Know Your Agent.** There is no single KYA standard yet. Identity-verification companies publish their own definitions [4–6]. Across them, four pillars recur: identity, principal binding, authorization, and behaviour/reputation. Their products mostly target finance and bind an agent to a human through document-based KYC. The Decentralized Identity Foundation now hosts KYA-OS (formerly MCP-I, donated by Vouched), an open specification that identifies agents with W3C decentralized identifiers and expresses delegation as verifiable credentials [32]; it is a protocol specification, not an integration with an agent orchestrator. None of these provides an open implementation integrated with an agent orchestrator.
+- **Agent identity and accountability in research.** Chan et al. [18] analyse three measures that give visibility into deployed agents: agent identifiers, real-time monitoring and activity logging. IDs for AI systems [19] extends this to per-instance identifiers that also record parent–child relations when an agent spawns sub-agents. South et al. [20] propose extending OAuth 2.0 and OpenID Connect with agent-specific delegation credentials that tie an agent to the user who authorised it. These works are conceptual: they propose mechanisms and discuss trade-offs, but do not build and measure them on an agent platform. AgentPassport implements identifiers (passport), monitoring (trust observer), logging (audit ledger) and delegation for real AX tasks and measures them.
+- **Request signing and agent identity.** HTTP Message Signatures (RFC 9421) [7] sign and verify selected components of an HTTP message, such as method, authority, path and chosen headers. The IETF Web Bot Auth working group profiles RFC 9421 for automated clients and adds a `Signature-Agent` header and a JWKS-based key directory [8]. RFC 7800 [9] defines the `cnf` claim, which binds a token to a key: a relying party that demands proof of possession rejects a stolen token used without that key. DPoP (RFC 9449) [21] applies the same idea to OAuth access tokens. SPIFFE [10] defines a URI format (`spiffe://<trust-domain>/<path>`) for workload identities; AX plans to adopt it [3]. IETF work on workload identity (WIMSE) is being extended to AI agents; one individual draft proposes credentials that bind an agent's identity to its owner's [22], the same principal binding our passport carries.
+- **Human login and delegation.** The OAuth 2.0 device grant (RFC 8628) [11] lets a client without a browser, such as a command-line tool, obtain tokens after the user logs in through a browser on another device. OAuth Token Exchange (RFC 8693) [12] lets an authorization server issue a new token, optionally with a narrower scope and audience, and record delegation in the `act` claim. Macaroons [23] introduced holder-side attenuation: caveats appended to a credential can only narrow its authority. Biscuit [13] brings this to public-key tokens with Datalog-based checks, so a holder can attenuate a token without contacting the issuer. Our delegation follows the issuer-mediated token-exchange model; offline Biscuit attenuation is our research comparison.
+- **Agent payments.** Google's Agent Payments Protocol (AP2) [14] records the user's intent and approval of a specific cart as cryptographically signed mandates (verifiable credentials); this inspires our approval grants bound to one exact request. Visa's Trusted Agent Protocol [24] lets merchants recognise registered shopping agents through RFC 9421 signatures aligned with Web Bot Auth, which shows that request signing for agents is already used in commerce.
+- **Attacks on agents.** Indirect prompt injection hides instructions in content the agent reads [15]. OWASP ranks prompt injection first among LLM application risks [16] and catalogues agent-specific risks in a separate Top 10 for agentic applications [25]; Deng et al. [26] survey the threats to agents more broadly. AgentDojo [27] provides realistic agent tasks with prompt-injection test cases for evaluating attacks and defences. Nasr et al. [28] bypassed 12 recently published defences against jailbreaks and prompt injection with adaptive attacks, mostly at success rates above 90%, although most of those defences had reported near-zero attack success. Text-level detection is therefore not a reliable security boundary. CaMeL [29] instead enforces capabilities and data-flow policies in a system layer around the model. We take the same system-level stance at the network edge: we limit what the agent can *do*, not what it *thinks*.
+- **Tamper-evident logging.** A hash chain makes changes to past entries evident, but auditing it takes time linear in the log length. Crosby and Wallach [30] propose a Merkle-tree history structure whose audit and lookup proofs are logarithmic. Our ledger uses a hash chain with signed checkpoints; tree-based proofs are a possible extension.
+- **Zero trust.** NIST SP 800-207 [31] defines zero trust architecture: no implicit trust based on network location, and an access decision for each request to a resource. AgentPassport applies this model to agent egress: every outbound request is authenticated and authorised on its own, and trust in a task is re-evaluated continuously.
 - **Anomaly detection.** Isolation Forest [17] is an unsupervised method suited to our setting, where labelled attack data is scarce but benign runs are easy to collect.
 
 ### 2.7 Formal constraints
@@ -157,6 +160,8 @@ Request acceptance:    accept(r) ⇔ valid_sig(r, cnf.jwk) ∧ valid_passport �
                                    ∧ host ∈ V.hosts ∧ action ∈ V.actions
                                    ∧ (amount ≤ limits ∨ valid approval grant bound to digest(r))
 ```
+
+Here `cnf.jwk` is the public per-task key named in the passport, `jti` is the passport's unique ID, and an approval grant is a short-lived token the passport authority issues after the principal approves one exact request (see S4).
 
 ### 2.8 Limitations and assumptions
 
@@ -176,20 +181,35 @@ Request acceptance:    accept(r) ⇔ valid_sig(r, cnf.jwk) ∧ valid_passport �
 1. Google, AX: declarative orchestrator for autonomous agent workloads, github.com/google/ax, v0.3.0 / main, 2026.
 2. Agent Substrate project, github.com/agent-substrate/substrate.
 3. Google, AX roadmap, github.com/google/ax/blob/main/docs/roadmap.md.
-4. Sumsub, "From AI agents to Know Your Agent".
-5. Entrust, "Know Your Agent (KYA): AI agent verification explained".
-6. Vouched, "What is Know Your Agent?".
-7. A. Backman, J. Richer, M. Sporny, HTTP Message Signatures, RFC 9421, 2024.
-8. T. Meunier et al., Web Bot Auth, IETF Internet-Drafts.
-9. M. Jones et al., Proof-of-Possession Key Semantics for JWTs, RFC 7800, 2016.
-10. SPIFFE project, spiffe.io.
-11. W. Denniss et al., OAuth 2.0 Device Authorization Grant, RFC 8628, 2019.
-12. M. Jones et al., OAuth 2.0 Token Exchange, RFC 8693, 2020.
+4. Sumsub, "From AI Agents to Know Your Agent: Why KYA Is Critical for Secure Autonomous AI", sumsub.com/blog/know-your-agent, January 2026.
+5. Entrust, "What is Know Your Agent (KYA)?", entrust.com/resources/learn/know-your-agent.
+6. Vouched, "Know Your Agent: Building Trust Frameworks for AI", vouched.id/learn/blog/building-a-trust-framework-for-ai-agents-why-know-your-agent-matters.
+7. A. Backman, J. Richer, M. Sporny, HTTP Message Signatures, RFC 9421, February 2024.
+8. T. Meunier, S. Major, HTTP Message Signatures for automated traffic, draft-ietf-webbotauth-httpsig-protocol-01, IETF Web Bot Auth working group Internet-Draft (work in progress), October 2026.
+9. M. Jones, J. Bradley, H. Tschofenig, Proof-of-Possession Key Semantics for JSON Web Tokens (JWTs), RFC 7800, April 2016.
+10. SPIFFE project, Secure Production Identity Framework for Everyone, spiffe.io.
+11. W. Denniss, J. Bradley, M. Jones, H. Tschofenig, OAuth 2.0 Device Authorization Grant, RFC 8628, August 2019.
+12. M. Jones, A. Nadalin, B. Campbell, J. Bradley, C. Mortimore, OAuth 2.0 Token Exchange, RFC 8693, January 2020.
 13. Biscuit authorization tokens, biscuitsec.org.
-14. Google Cloud, Agent Payments Protocol (AP2), 2025.
-15. K. Greshake et al., "Not what you've signed up for: compromising real-world LLM-integrated applications with indirect prompt injection", ACM AISec, 2023.
-16. OWASP Top 10 for LLM Applications, LLM01: Prompt Injection.
-17. F. T. Liu, K. M. Ting, Z.-H. Zhou, Isolation Forest, IEEE ICDM, 2008.
+14. Google Cloud, "Announcing Agent Payments Protocol (AP2)", Google Cloud Blog, September 2025; specification at github.com/google-agentic-commerce/AP2.
+15. K. Greshake, S. Abdelnabi, S. Mishra, C. Endres, T. Holz, M. Fritz, "Not what you've signed up for: Compromising real-world LLM-integrated applications with indirect prompt injection", Proc. 16th ACM Workshop on Artificial Intelligence and Security (AISec '23), pp. 79–90, 2023.
+16. OWASP GenAI Security Project, OWASP Top 10 for LLM Applications 2025, LLM01:2025 Prompt Injection, November 2024; 2026 edition, August 2026.
+17. F. T. Liu, K. M. Ting, Z.-H. Zhou, "Isolation Forest", Proc. IEEE International Conference on Data Mining (ICDM), 2008.
+18. A. Chan et al., "Visibility into AI Agents", Proc. ACM Conference on Fairness, Accountability, and Transparency (FAccT), 2024. doi:10.1145/3630106.3658948.
+19. A. Chan, N. Kolt et al., "IDs for AI Systems", RegML Workshop at NeurIPS 2024; arXiv:2406.12137.
+20. T. South, S. Marro, T. Hardjono, R. Mahari, C. D. Whitney, D. Greenwood, A. Chan, A. Pentland, "Authenticated Delegation and Authorized AI Agents", arXiv:2501.09674, 2025.
+21. D. Fett, B. Campbell, J. Bradley, T. Lodderstedt, M. Jones, D. Waite, OAuth 2.0 Demonstrating Proof of Possession (DPoP), RFC 9449, September 2023.
+22. Y. Ni, C. P. Liu, WIMSE applicability for AI agents, draft-ni-wimse-ai-agent-identity, IETF individual Internet-Draft (work in progress), 2026.
+23. A. Birgisson, J. G. Politz, Ú. Erlingsson, A. Taly, M. Vrable, M. Lentczner, "Macaroons: Cookies with Contextual Caveats for Decentralized Authorization in the Cloud", Proc. NDSS, 2014.
+24. Visa, Trusted Agent Protocol, developer.visa.com/capabilities/trusted-agent-protocol, October 2025.
+25. OWASP GenAI Security Project, OWASP Top 10 for Agentic Applications for 2026, December 2025.
+26. Z. Deng et al., "AI Agents Under Threat: A Survey of Key Security Challenges and Future Pathways", ACM Computing Surveys 57(7), Article 182, 2025.
+27. E. Debenedetti, J. Zhang, M. Balunović, L. Beurer-Kellner, M. Fischer, F. Tramèr, "AgentDojo: A Dynamic Environment to Evaluate Prompt Injection Attacks and Defenses for LLM Agents", NeurIPS Datasets and Benchmarks Track, 2024.
+28. M. Nasr, N. Carlini, C. Sitawarin et al., "The Attacker Moves Second: Stronger Adaptive Attacks Bypass Defenses Against LLM Jailbreaks and Prompt Injections", USENIX Security Symposium, 2026 (arXiv:2510.09023).
+29. E. Debenedetti, I. Shumailov et al., "Defeating Prompt Injections by Design", arXiv:2503.18813, 2025.
+30. S. A. Crosby, D. S. Wallach, "Efficient Data Structures for Tamper-Evident Logging", Proc. 18th USENIX Security Symposium, pp. 317–334, 2009.
+31. S. Rose, O. Borchert, S. Mitchell, S. Connelly, Zero Trust Architecture, NIST Special Publication 800-207, August 2020. doi:10.6028/NIST.SP.800-207.
+32. Decentralized Identity Foundation, "DIF and Vouched Advance Agentic Identity with KYA-OS", blog.identity.foundation/kya-os, 2026; developed in DIF's Trusted AI Agents Working Group.
 
 ---
 
@@ -219,13 +239,13 @@ Design principles:
 - anyone can verify with standard libraries;
 - adapters to AX are kept thin, because its API is alpha.
 
-![Figure 5: AgentPassport architecture.](../figures/system_architecture.png)
+![Figure 4: AgentPassport architecture.](../figures/system_architecture.png)
 
-*Figure 5: AgentPassport architecture. Purple: our components; grey: AX and Agent Substrate (unchanged); green: the outside world and the AX Gateway. Numbers follow the launch–act–watch flow.*
+*Figure 4: AgentPassport architecture. Purple: our components; grey: AX and Agent Substrate (unchanged); green: the outside world and the AX Gateway. Numbers follow a task's three phases: launch (login, admission, passport), act (signed requests checked by verifiers) and watch (events, trust score, suspension).*
 
-![Figure 6: Sequence of a task's life with AgentPassport.](../figures/sequence.png)
+![Figure 5: Sequence of a task's life with AgentPassport.](../figures/sequence.png)
 
-*Figure 6: Sequence of a task's life with AgentPassport. Dashed arrows are responses or asynchronous events. Step 15 only happens if the trust score falls below the threshold.*
+*Figure 5: Sequence of a task's life with AgentPassport. Dashed arrows are responses or asynchronous events. Step 15 only happens if the trust score falls below the threshold.*
 
 ### 3.2 Steps, inputs and outputs
 
@@ -261,9 +281,9 @@ W1 = first week of October 2026.
 | Attack suite and evaluation (S8) | W29–W35 | late Apr – May |
 | Final report, poster, demo | W34–W38 | late May – Jun |
 
-![Figure 16: Planned timeline.](../figures/timeline.png)
+![Figure 6: Planned timeline.](../figures/timeline.png)
 
-*Figure 16: Planned timeline. Purple: KYA core components; green: relying-party side; red: evaluation; brown: reports; grey: setup. Diamonds mark milestones M1–M4.*
+*Figure 6: Planned timeline. Purple: KYA core components; green: relying-party side; red: evaluation; brown: reports; grey: setup. Diamonds mark milestones M1–M4.*
 
 ### 3.4 Milestones
 
@@ -289,15 +309,16 @@ If the Gateway restriction is unreliable, the prototype falls back to HTTP_PROXY
 ### S1 – Specification
 
 - **Passport:** a JWT signed with Ed25519 (EdDSA) containing:
-  - `sub`: a SPIFFE-style ID, `spiffe://kya.dev/ns/<atespace>/task/<name>`, so it can later align with AX's planned SPIFFE identities;
+  - `sub`: a SPIFFE-style ID, `spiffe://kya.dev/ns/<namespace>/task/<name>`, so it can later align with AX's planned SPIFFE identities;
   - `task`: image digest, model (from the AX Model resource), the AX gateway the task is bound to (`kya.task.gateway`), and a manifest hash covering the Task spec, its Workspaces and its Gateway;
   - `principal`: subject, identity provider, login time, group;
   - `visa`: hosts, actions, per-request and total limits, approval threshold;
   - `parent`, `status` URL and `cnf.jwk`, the public task key (RFC 7800).
-- **Signature profile (RFC 9421 / Web Bot Auth):**
-  - covered components: `@method`, `@authority`, `@path`, `content-digest` (RFC 9530) and `kya-passport`;
-  - parameters: `created`, `keyid`, random `nonce`, `tag="kya-v1"`;
-  - a `Signature-Agent` header points to the passport authority.
+- **Signature profile (RFC 9421, conforming to the Web Bot Auth draft [8]):**
+  - covered components: `@method`, `@authority`, `@path`, `signature-agent`, `kya-passport` and, if a body is present, `content-digest` (RFC 9530);
+  - parameters: `created`, `expires` (60 s after `created`), `keyid`, a random `nonce` and `tag="web-bot-auth"`;
+  - `keyid` is the JWK SHA-256 thumbprint (RFC 7638; RFC 8037 for Ed25519) of the task key named in the passport's `cnf.jwk`;
+  - the `Signature-Agent` header names the passport authority's origin. The PA serves a signed key directory at `/.well-known/http-message-signatures-directory` with the public keys of all active tasks, so any Web Bot Auth verifier can check who signed a request even if it does not understand passports. KYA verifiers additionally check the key against the passport.
 - **AgentPolicy:** a YAML schema per group, including whether `spec.debug` may be used.
 - **Threat model:** STRIDE analysis.
 
@@ -319,7 +340,7 @@ If the Gateway restriction is unreliable, the prototype falls back to HTTP_PROXY
     6. request a passport;
     7. adjust the task: set `spec.image` to the KYA runner variant, set `spec.gateway` to `kya-egress-only`, and inject `HTTPS_PROXY` with a per-task 256-bit proxy credential, `KYA_PASSPORT_ID` and `KYA_EVENTS_URL`;
     8. forward to ax-server and write audit events.
-  - Because a Task references its Gateway and Workspaces by name, the proxy also governs the other write calls: `UpdateGateway`/`DeleteGateway` and `UpdateModel`/`DeleteModel` are operator-only, and `UpdateWorkspace` is rejected while a running task references the workspace.
+  - Because a Task references its Gateway and Workspaces by name, the proxy also governs the other write calls: `UpdateGateway`/`DeleteGateway` and `UpdateModel`/`DeleteModel` are reserved for operators (platform administrators), and `UpdateWorkspace` is rejected while a running task references the workspace.
   - A NetworkPolicy ensures that ax-server accepts connections only from the admission proxy and ax-controller, so the proxy cannot be bypassed.
 - **Passport authority (Go + PostgreSQL):**
   - The issuer key is published at `/.well-known/jwks.json` and rotated monthly.
@@ -344,7 +365,7 @@ If the Gateway restriction is unreliable, the prototype falls back to HTTP_PROXY
     - meters requests, bytes and LLM tokens as spend signals.
   - As a stretch goal, the proxy injects model API keys so that no long-lived secret is needed in the sandbox.
 - **Known costs of the AX integration:**
-  - AX creates one actor template per distinct image and environment, so the per-task proxy credential in `spec.env` may reduce actor density; we measure this in RQ2.
+  - AX creates one actor template per distinct image and environment, so the per-task proxy credential in `spec.env` may reduce actor density; we measure this in the evaluation (S8, see 5.4).
   - `ax ssh` needs `spec.debug`, which policy reserves for operators.
   - AX's workspace setup agents need a model API key inside the container; until AX moves setup into a separate actor, this is the one secret in the sandbox that AgentPassport does not control.
 
@@ -356,12 +377,12 @@ If the Gateway restriction is unreliable, the prototype falls back to HTTP_PROXY
 
 - **Verifier bindings:** a Spring Boot starter (servlet filter plus a `@KyaAction(value, amount, currency)` annotation) and a Go net/http middleware.
 - **Check order (cheapest first):**
-  1. signature tag and covered components;
-  2. `created` within ±60 s and nonce not seen in the last 5 min;
+  1. `tag="web-bot-auth"` and the required covered components, including `signature-agent` and `kya-passport`;
+  2. `created` within ±60 s, `expires` not passed, and nonce not seen for this key in the last 5 min;
   3. content digest;
   4. passport JWS against the JWKS, `nbf`/`exp`/`aud`;
   5. revocation list no older than 60 s;
-  6. request signature against `cnf.jwk`;
+  6. `keyid` equals the thumbprint of `cnf.jwk`, and the request signature verifies with that key;
   7. host, action and amount limits;
   8. delegation chain.
 - **Gradual adoption:** requests without KYA headers pass through by default; `kya.mode=required` accepts verified agents only.
@@ -423,13 +444,13 @@ Python, FastAPI, scikit-learn, Redis Streams/NATS.
   The child is bound to the same `kya-egress-only` Gateway. Revoking a parent revokes all its descendants. As a research extension, we compare this PA-mediated design with offline Biscuit attenuation.
 - **Audit ledger:** an append-only PostgreSQL table where each entry stores hₙ = SHA-256(hₙ₋₁ ∥ canonical(eₙ)). Every 5 minutes the PA signs and publishes a checkpoint, so even a database administrator cannot silently rewrite history.
 
-![Figure 13: Delegation with attenuation.](../figures/delegation.png)
+![Figure 12: Delegation with attenuation.](../figures/delegation.png)
 
-*Figure 13: Delegation with attenuation. Each sub-task receives only the permissions it needs; a sub-task that tries to use a permission of its parent is rejected.*
+*Figure 12: Delegation with attenuation. Each sub-task receives only the permissions it needs; a sub-task that tries to use a permission of its parent is rejected.*
 
-![Figure 14: Hash-chained audit entries.](../figures/audit_chain.png)
+![Figure 13: Hash-chained audit entries.](../figures/audit_chain.png)
 
-*Figure 14: Hash-chained audit entries. Each entry commits to all entries before it.*
+*Figure 13: Hash-chained audit entries. Each entry commits to all entries before it.*
 
 ### S7 – Console
 
@@ -461,16 +482,16 @@ React + TypeScript. Views:
 
 | Member | Role | Steps owned | Responsibilities |
 |---|---|---|---|
-| [Member 1] | Platform & infrastructure | S0, S3 | Cluster, AX/Substrate install, Gateway and NetworkPolicy setup, KYA runner, signing proxy, Helm deployment |
-| [Member 2] | Identity & cryptography | S1, S2, S6 | Passport spec, PA, admission proxy (UpdateTask/Gateway governance), signatures, delegation, audit ledger |
-| [Member 3] | Relying party & SDK | S4, S7 | Spring Boot/Go verifiers, demo shop and payments, step-up flow, console |
-| [Member 4] | Observer & evaluation | S5, S8 | Features, anomaly model, attack suite, benchmarks |
+| Ömer Burak Taşkın | Platform & infrastructure | S0, S3 | Cluster, AX/Substrate install, Gateway and NetworkPolicy setup, KYA runner, signing proxy, Helm deployment |
+| Alper Melkeli | Identity & cryptography | S1, S2, S6 | Passport spec, PA, admission proxy (UpdateTask/Gateway governance), signatures, delegation, audit ledger |
+| Yiğit Mete Tuygun | Relying party & SDK | S4, S7 | Spring Boot/Go verifiers, demo shop and payments, step-up flow, console |
+| Fikret Kerem Dinçer | Observer & evaluation | S5, S8 | Features, anomaly model, attack suite, benchmarks |
 
 **Steps with more than one member:**
 
-- **S1:** Member 2 writes the passport and signature specs. Member 1 contributes the Gateway and NetworkPolicy experiment results. Member 4 leads the threat model.
-- **S4 step-up flow:** Member 3 builds the verifier side and console UI. Member 2 builds approval-grant issuance in the PA. Member 1 adds problem-document handling in the signing proxy.
-- **S8:** all members contribute. Each one writes the attack scenarios and benchmarks for their own layer; Member 4 coordinates and runs the ablation. Interim and final reports are written jointly.
+- **S1:** Alper writes the passport and signature specs. Burak contributes the Gateway and NetworkPolicy experiment results. Fikret leads the threat model.
+- **S4 step-up flow:** Mete builds the verifier side and console UI. Alper builds approval-grant issuance in the PA. Burak adds problem-document handling in the signing proxy.
+- **S8:** all members contribute. Each one writes the attack scenarios and benchmarks for their own layer; Fikret coordinates and runs the ablation. Interim and final reports are written jointly.
 
 ---
 
@@ -507,13 +528,13 @@ React + TypeScript. Views:
 - *Console approval page (step-up):* verified facts "shop.example.com · USB-C hub, 7-port · 450 TRY", and separately the agent's unverified justification "best price per port among 14 results", with Approve / Reject and an optional note.
 - *Console incident view:* "suspended: repetitive requests (412 identical POST /api/orders in 2 minutes)", with the full event trail.
 
-![Figure 15: An indirect prompt-injection attack and how each AgentPassport component limits it.](../figures/injection.png)
+![Figure 14: An indirect prompt-injection attack and how each AgentPassport component limits it.](../figures/injection.png)
 
-*Figure 15: An indirect prompt-injection attack against the shopping agent and how each AgentPassport component limits it.*
+*Figure 14: An indirect prompt-injection attack against the shopping agent and how each AgentPassport component limits it.*
 
-![Figure 12: Trust score over time.](../figures/trust_score.png)
+![Figure 15: Trust score over time.](../figures/trust_score.png)
 
-*Figure 12: Trust score over time. Normal activity keeps the score around 0.82. Two denied requests and a never-seen action type within 40 seconds push it below the suspend threshold, and the observer suspends the task.*
+*Figure 15: Trust score over time. Normal activity keeps the score around 0.82. Two denied requests and a never-seen action type within 40 seconds push it below the suspend threshold, and the observer suspends the task.*
 
 ### 5.3 Demonstrated behaviour
 
@@ -524,7 +545,7 @@ React + TypeScript. Views:
 
   The observer then suspends the agent within seconds. No money moves.
 - **Looping agent:** stopped before it burns the model budget.
-- **Stolen passport:** useless, because replays and new requests both fail signature checks.
+- **Stolen passport:** useless. A replayed request fails the timestamp and nonce checks, and a new request cannot be signed, because the task key exists only in the signing proxy.
 - **Over-reaching sub-agent:** rejected by delegation attenuation.
 - **Purchase above the threshold:** the agent learns it needs approval, waits, and either repeats the exact request with a grant or adapts after a rejection; it can never approve itself.
 
