@@ -12,7 +12,7 @@
 
 \subsection{Trust assumptions}
 
-We assume the following components are \emph{trusted} and correctly deployed: the Kubernetes control plane, Agent Substrate's isolation (gVisor or microVM), \code{ax-server}, and our own admission proxy, passport authority, egress gateway, observer and ledger. We assume the university OIDC provider authenticates people correctly. Standard cryptography (Ed25519, SHA-256, TLS~1.3) is assumed to be secure.
+We assume the following components are \emph{trusted} and correctly deployed: the Kubernetes control plane, Agent Substrate's isolation (gVisor or microVM), \code{ax-server}, \code{ax-controller}, and our own admission proxy, passport authority, signing proxy, observer and ledger. We also trust AX to enforce each task's \code{Gateway} egress policy. We assume the university OIDC provider authenticates people correctly. Standard cryptography (Ed25519, SHA-256, TLS~1.3) is assumed to be secure.
 
 We assume nothing about the \emph{agent}: its code, its model, its inputs and everything else inside the sandbox may be malicious at any time.
 
@@ -43,15 +43,18 @@ Table~\ref{tab:stride} lists threats grouped by the STRIDE categories.
 \toprule
 \textbf{Category} & \textbf{Threat} & \textbf{Mitigation}\\
 \midrule
-Spoofing & A3 sends requests pretending to be a legitimate agent. & Requests must carry a PA-signed passport and a fresh signature with the key in \code{cnf}; neither can be produced outside the gateway (Example~4).\\
-Spoofing & A2 tries to act as another task in the cluster. & Keys stay in the gateway; the proxy credential binds a connection to one task; optional source-address check.\\
-Tampering & Request body changed between gateway and relying party. & \code{content-digest} is covered by the signature; TLS on both legs.\\
+Spoofing & A3 sends requests pretending to be a legitimate agent. & Requests must carry a PA-signed passport and a fresh signature with the key in \code{cnf}; neither can be produced outside the signing proxy (Example~4).\\
+Spoofing & A principal or A2 calls \code{ax-server} directly to launch a task without a passport check. & NetworkPolicy: only the admission proxy and \code{ax-controller} can reach \code{ax-server}.\\
+Spoofing & A2 tries to act as another task in the cluster. & Keys stay in the signing proxy; the proxy credential binds a connection to one task; optional source-address check.\\
+Tampering & Request body changed between signing proxy and relying party. & \code{content-digest} is covered by the signature; TLS on both legs.\\
+Tampering & A principal changes a running task, or a workspace it uses, after the passport was issued. & Updates go through the admission proxy; a changed manifest hash requires a new passport; referenced workspaces are locked while tasks run; gateways and models are operator-only.\\
 Tampering & Audit entries changed afterwards (A5). & Hash chain plus signed, published checkpoints.\\
 Repudiation & Principal claims ``my agent did not do that''. & Ledger links every request to passport, task, image, manifest and authenticated principal.\\
 Information disclosure & Relying parties learn who the principal is. & Pairwise pseudonymous principal identifiers when identity is not needed.\\
-Information disclosure & A2 exfiltrates workspace data to an attacker host. & Host allowlist at the gateway; unknown hosts are unreachable. (Exfiltration \emph{through} an allowed host remains possible; see below.)\\
-Denial of service & A2 floods relying parties or burns the model budget. & Rate limits and spend metering at the gateway; observer suspension (Example~3).\\
+Information disclosure & A2 exfiltrates workspace data to an attacker host. & The AX gateway allows only the signing proxy, which enforces the visa's host allowlist; unknown hosts are unreachable. (Exfiltration \emph{through} an allowed host remains possible; see below.)\\
+Denial of service & A2 floods relying parties or burns the model budget. & Rate limits and spend metering at the signing proxy; observer suspension (Example~3).\\
 Elevation of privilege & A1 makes the agent perform an action outside its mandate. & Visa enforced by verifier; step-up approvals for risky amounts; observer suspension (Example~2).\\
+Elevation of privilege & A principal or A2 widens a task's network access by editing its gateway or pointing \code{spec.gateway} elsewhere. & The admission proxy overrides \code{spec.gateway}; gateway changes are operator-only; the gateway is part of the manifest hash.\\
 Elevation of privilege & A sub-task gets more rights than its parent. & PA-enforced attenuation and budget reservation (Example~5).\\
 Elevation of privilege & A1 makes the agent write a persuasive justification so that the principal approves a harmful step-up. & The console separates verified facts (host, item, amount from the refused request) from the agent's justification, which is labelled as unverified; grants are bound to the exact request digest.\\
 Elevation of privilege & A4 grants overly broad visas. & Policy caps what any group can request; narrower requests are encouraged by templates; console shows the effective visa before launch.\\
@@ -61,15 +64,17 @@ Elevation of privilege & A4 grants overly broad visas. & Policy caps what any gr
 \label{tab:stride}
 \end{table}
 
-\subsection{Residual risks and limitations}
+\subsection{Residual risks and limitations}\label{sec:residual}
 
 We state openly what the design does \emph{not} solve:
 
 \begin{itemize}
   \item \textbf{Misuse within the mandate.} If the visa allows ordering up to 500~TRY at a shop, a hijacked agent can still place a bad order for 480~TRY. KYA bounds the \emph{blast radius}; it does not guarantee that every in-scope action matches the principal's intent. Tight visas, low approval thresholds and the observer reduce, but do not remove, this risk.
   \item \textbf{Exfiltration through allowed channels.} An agent allowed to post reviews could hide stolen data in a review text. Content inspection is out of scope.
-  \item \textbf{Relying parties that do not verify.} The signature only helps services that check it. For others, the gateway's allowlist and metering still apply.
-  \item \textbf{Trusted gateway.} Because it terminates TLS and holds task keys, a compromised gateway is a serious incident. We mitigate with a minimal code base, keys in memory only, short passport lifetimes and separate deployment; hardware-backed key storage is future work.
-  \item \textbf{Egress enforcement depends on the platform.} If sandbox egress cannot be restricted to the gateway (Section~\ref{sec:seams}), a malicious agent could bypass it. The evaluation reports which mode was used.
+  \item \textbf{Relying parties that do not verify.} The signature only helps services that check it. For others, the signing proxy's allowlist and metering still apply.
+  \item \textbf{Trusted signing proxy.} Because it terminates TLS and holds task keys, a compromised signing proxy is a serious incident. We mitigate with a minimal code base, keys in memory only, short passport lifetimes and separate deployment; hardware-backed key storage is future work.
+  \item \textbf{Egress enforcement depends on the platform.} If AX's gateway does not restrict sandbox egress to the signing proxy reliably (Section~\ref{sec:seams}), a malicious agent could bypass the proxy. Continuous gateway reconciliation is still on the AX roadmap. The evaluation reports which mode was used.
+  \item \textbf{A secret AX places in the sandbox.} AX's workspace setup agents need a model API key inside the container~\cite{ax-sandbox}. A compromised agent could read it and use it through the signing proxy, where it is metered and attributed, but it could also leak it through an allowed host. Moving this key out of the sandbox depends on AX (separate setup actor, on its roadmap) or on credential injection in the signing proxy (stretch goal).
+  \item \textbf{A moving upstream target.} AX is pre-1.0. Calls we depend on (\code{UpdateTask}, \code{SuspendTask}, the runner contract, the \code{Gateway} resource) may change. We pin one AX version and keep AX-specific code in thin adapters (Section~\ref{sec:plan}).
   \item \textbf{False positives.} An over-eager observer can suspend legitimate agents. Suspension (rather than deletion) keeps this recoverable; tuning is part of the evaluation.
 \end{itemize}

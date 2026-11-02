@@ -11,12 +11,12 @@ Table~\ref{tab:gap} compares what AX provides today with what a KYA-capable plat
 \textbf{Concern} & \textbf{AX today} & \textbf{Gap} & \textbf{Our component}\\
 \midrule
 Isolation & Every task in a gVisor or microVM sandbox with CPU/memory limits. & None; we rely on it. & (AX)\\
-Who launched the task & Whoever can reach \code{ax-server}. No user identity on tasks. & No accountable human attached to a task. & Admission proxy\\
-Agent identity & Task name and atespace; no cryptographic identity (SPIFFE is on the roadmap). & Outside services cannot verify which agent is calling. & Passport authority\\
-Permissions & Resource limits only. & No notion of allowed hosts, actions or spending limits. & Policy store, passport visa\\
-Outbound traffic & Substrate supports egress controls; AX does not configure them per task. & No per-task allowlist, no request signing. & Egress gateway\\
+Who launched the task & Whoever can reach \code{ax-server}; API authentication is not documented. No user identity on tasks. & No accountable human attached to a task. & Admission proxy\\
+Agent identity & Task name and atespace; no cryptographic identity (SPIFFE IDs and X.509-SVIDs are on the roadmap). & Outside services cannot verify which agent is calling. & Passport authority\\
+Permissions & Resource limits; host/port egress allowlist per gateway. Token and timeout budgets and approval policies are on the roadmap. & No notion of actions or spending limits, and nothing a relying party can verify. & Policy store, passport visa\\
+Outbound traffic & Per-task \code{Gateway} with a host/port egress allowlist. & No request signing; a relying party cannot tell which agent, or whose agent, is calling. & Signing proxy (behind an AX gateway)\\
 Verification by third parties & Not in scope. & Services have no way to check agent requests. & Verifier SDK\\
-Runtime monitoring & \code{ax watch} shows phase changes; no behavioural telemetry. & Hijacked or looping agents are not detected. & Trust observer\\
+Runtime monitoring & \code{ax watch} / \code{WatchTask} show phase and condition changes; behavioural telemetry is on the roadmap. & Hijacked or looping agents are not detected. & Trust observer\\
 Emergency stop & \code{ax suspend} exists, but a human must run it. & No automatic reaction. & Trust observer\\
 Audit & Task state in Redis. & No tamper-evident history of what agents did. & Audit ledger\\
 Sub-agents & Tasks may spawn tasks. & A child could get more power than its parent. & Delegation chains\\
@@ -45,9 +45,9 @@ Sub-agents & Tasks may spawn tasks. & A child could get more power than its pare
 \textbf{ID} & \textbf{Requirement}\\
 \midrule
 FR1 & A task can only be created by an authenticated principal; the principal's identity is recorded with the task.\\
-FR2 & Every task creation is checked against policy (allowed images, models, hosts, actions, limits) and rejected with a clear reason if it violates it.\\
+FR2 & Every task creation or update is checked against policy (allowed images, models, hosts, actions, limits) and rejected with a clear reason if it violates it.\\
 FR3 & Every admitted task receives a signed passport describing its identity, principal, visa and validity.\\
-FR4 & All outbound network traffic from a task passes through the egress gateway; traffic to hosts outside the visa is blocked.\\
+FR4 & All outbound network traffic from a task passes through the signing proxy, enforced by an AX gateway that allows no other destination; traffic to hosts outside the visa is blocked.\\
 FR5 & Every request to a relying party carries the passport and an RFC~9421 signature produced by a key that never enters the sandbox.\\
 FR6 & A relying party can verify signature, passport validity, revocation status, scope and limits with a few lines of integration code.\\
 FR7 & Requests above a configured risk (e.g.\ amount) trigger a step-up: the principal must approve before the request succeeds. The agent is told explicitly that approval is pending, can follow its status, and learns the decision, but can never grant approval itself.\\
@@ -68,10 +68,10 @@ FR11 & A console shows live tasks, passports, denials and pending approvals, and
 \textbf{ID} & \textbf{Requirement}\\
 \midrule
 NFR1 & \textbf{No fork.} AX and Agent Substrate are used unmodified, through documented extension points only.\\
-NFR2 & \textbf{Low overhead.} The gateway adds less than 10~ms median latency per request; verification takes less than 2~ms with cached keys.\\
+NFR2 & \textbf{Low overhead.} The signing proxy adds less than 10~ms median latency per request; verification takes less than 2~ms with cached keys.\\
 NFR3 & \textbf{Fast reaction.} From the event that crosses the suspend threshold to the task being suspended: under 5~seconds.\\
 NFR4 & \textbf{Offline verifiability.} A relying party can verify a request using only cached public keys and a recent revocation list, without calling us on every request.\\
-NFR5 & \textbf{Least privilege.} No long-lived secret usable for signing or for reaching external hosts is ever placed inside a sandbox.\\
+NFR5 & \textbf{Least privilege.} No long-lived secret usable for signing or for reaching external hosts is ever placed inside a sandbox by AgentPassport. (AX itself currently places a model API key in the container for workspace setup agents; see Section~\ref{sec:residual}.)\\
 NFR6 & \textbf{Easy adoption.} Integrating the verifier into an existing Spring Boot service takes under 20 lines of code and configuration.\\
 NFR7 & \textbf{Open standards.} Formats follow existing RFCs where possible, so third parties can implement their own verifier.\\
 \bottomrule

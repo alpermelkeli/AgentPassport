@@ -5,8 +5,8 @@ We will evaluate AgentPassport both as a security mechanism and as a piece of in
 \subsection{Research questions}
 
 \begin{description}[leftmargin=0pt,labelindent=0pt]
-  \item[RQ1 (Effectiveness)] Which fraction of attacks from our attack suite is blocked, and by which layer (gateway, verifier, observer)?
-  \item[RQ2 (Overhead)] How much latency and throughput cost do the gateway and verifier add per request, and how does the system scale with the number of concurrent tasks?
+  \item[RQ1 (Effectiveness)] Which fraction of attacks from our attack suite is blocked, and by which layer (AX gateway, signing proxy, verifier, observer)?
+  \item[RQ2 (Overhead)] How much latency and throughput cost do the signing proxy and verifier add per request, how does the system scale with the number of concurrent tasks, and what does a per-task environment cost AX in actor density and start-up time?
   \item[RQ3 (Detection quality)] How accurately and how quickly does the trust observer separate hijacked or looping agents from normal ones? How many false alarms does it raise on benign workloads?
   \item[RQ4 (Adoption effort)] How much work is it to protect an existing service and to run an existing agent under AgentPassport?
 \end{description}
@@ -35,7 +35,7 @@ Scope escalation & Calling actions or hosts outside the visa; exceeding per-requ
 Impersonation and replay & Replaying captured requests; reusing passports with new bodies; forging passports; using an expired or revoked passport.\\
 Delegation abuse & Sub-tasks requesting more than the parent; exceeding depth; budget double-spending across siblings.\\
 Resource abuse & Tight retry loops; request floods; long-running token-burning conversations.\\
-Platform evasion & Direct connections bypassing the proxy variables; DNS tunnelling attempts; attempts to read keys from the sandbox.\\
+Platform evasion & Direct connections bypassing the proxy variables; DNS tunnelling attempts; attempts to read keys from the sandbox; widening or swapping the task's AX gateway; calling \code{ax-server} directly.\\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -43,9 +43,9 @@ Platform evasion & Direct connections bypassing the proxy variables; DNS tunnell
 \subsection{Configurations compared}
 
 \begin{enumerate}
-  \item \textbf{Baseline}: plain AX, agents use API keys directly.
-  \item \textbf{Gateway only}: allowlist and metering, no signatures.
-  \item \textbf{Gateway + verifier}: full KYA identity and authorization, no observer.
+  \item \textbf{Baseline}: plain AX with a permissive gateway; agents use API keys directly.
+  \item \textbf{Proxy only}: AX gateway restricted to the signing proxy; allowlist and metering, no signatures.
+  \item \textbf{Proxy + verifier}: full KYA identity and authorization, no observer.
   \item \textbf{Full AgentPassport}: all components.
 \end{enumerate}
 
@@ -61,10 +61,11 @@ This ablation shows what each layer contributes.
 \midrule
 RQ1 & Attacks blocked before causing harm (per family, per configuration) & $\ge$ 95\% of in-scope attacks in full config\\
 RQ1 & Layer that first stopped each attack & reported\\
-RQ2 & Added latency per request, gateway (p50 / p99) & $<$ 10~ms / $<$ 40~ms\\
+RQ2 & Added latency per request, signing proxy (p50 / p99) & $<$ 10~ms / $<$ 40~ms\\
 RQ2 & Verification time with cached keys (p50) & $<$ 2~ms\\
-RQ2 & Gateway throughput on one core & $\ge$ 2,000 signed req/s\\
-RQ2 & Admission overhead per \code{CreateTask} & $<$ 150~ms\\
+RQ2 & Signing-proxy throughput on one core & $\ge$ 2,000 signed req/s\\
+RQ2 & Admission overhead per \code{UpdateTask} & $<$ 150~ms\\
+RQ2 & Task start-up time and actor density with vs.\ without per-task environment & reported\\
 RQ3 & Detection rate of hijacked / looping tasks & $\ge$ 90\%\\
 RQ3 & False-positive suspensions per 100 benign runs & $\le$ 2\\
 RQ3 & Time from triggering event to suspension & $<$ 5~s\\

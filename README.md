@@ -8,13 +8,17 @@ AgentPassport gives every AX task a verifiable passport, signs its outbound requ
 
 ## Status
 
-Proposal and system design, before implementation. This is a graduation project at Hacettepe University, Department of Computer Engineering. The repository currently holds the design document (Draft v0.2, September 2026).
+Proposal and system design, before implementation. This is a graduation project at Hacettepe University, Department of Computer Engineering. The repository currently holds the design document (Draft v0.3, October 2026), aligned with Google AX release v0.3.0, and the project proposal.
 
 ## Design document
 
 - [Design document (PDF)](docs/AgentPassport_Design_Document.pdf)
 - LaTeX source: [`docs/main.tex`](docs/main.tex) and [`docs/sections/`](docs/sections/)
 - Figures: [`docs/figures/`](docs/figures/)
+
+## Project proposal
+
+[`docs/proposal/project_proposal.md`](docs/proposal/project_proposal.md) answers the five sections of the university's project proposal form (summary, problem definition and literature review, solution plan, methodology, outcome and impact). It reuses the figures in `docs/figures/` and follows the figure numbering of the design document.
 
 To build the PDF, run XeLaTeX from `docs/`. The fonts Bitstream Charter, Liberation Sans and DejaVu Sans Mono must be installed.
 

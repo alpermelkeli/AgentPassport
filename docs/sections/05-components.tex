@@ -12,6 +12,7 @@ We reuse the university's existing OpenID Connect (OIDC) provider rather than bu
 \begin{lstlisting}[language=bash]
 kya login                                  # once per day; opens university SSO
 ax --server kya-admission.kya-system:8080 apply -f task.yaml
+# or once per shell: export AX_SERVER=kya-admission.kya-system:8080
 \end{lstlisting}
 
 The admission proxy validates the token (signature, issuer, audience, expiry) and extracts the principal's stable identifier (\code{sub}), e-mail and group memberships. These become the \code{principal} block of the passport. For the demo we also support a local development identity provider (e.g.\ Keycloak or Dex) so the system can run without university infrastructure.
@@ -37,6 +38,8 @@ spec:
     allow: ["ghcr.io/example/shopping-agent@sha256:*"]  # pinned digests only
   models:
     allow: ["anthropic/claude-*", "google/gemini-*"]
+  tasks:
+    allowDebug: false         # spec.debug (ax ssh) is for operators only
   passport:
     ttl: 2h                   # passports expire quickly
     maxDelegationDepth: 2     # task -> sub-task -> sub-sub-task
@@ -56,24 +59,35 @@ spec:
 
 A task may ask for \emph{less} than the policy allows by including an environment entry named \code{KYA\_\allowbreak{}REQUESTED\_\allowbreak{}VISA} (JSON) in its \code{spec.env}. Because the environment is part of the task manifest, the request is covered by the manifest hash in the passport. The effective visa is the intersection of the policy visa and the requested visa. (If AX later adds annotations to task metadata, the request can move there.)
 
-\textbf{Actions} are names chosen by relying parties (\code{order.create}, \code{payments.pay}, \ldots). A relying party publishes which HTTP routes correspond to which action names; the verifier SDK maps routes to actions (Section~\ref{sec:verifier}). The gateway only knows hosts; actions and amounts are enforced by the verifier, which sees the application-level meaning of a request.
+\textbf{Actions} are names chosen by relying parties (\code{order.create}, \code{payments.pay}, \ldots). A relying party publishes which HTTP routes correspond to which action names; the verifier SDK maps routes to actions (Section~\ref{sec:verifier}). The signing proxy only knows hosts; actions and amounts are enforced by the verifier, which sees the application-level meaning of a request.
 
 %-----------------------------------------------------------------
-\subsection{Admission proxy}
+\subsection{Admission proxy}\label{sec:admission}
 
 \textbf{Responsibility:} be the only entry point to \code{ax-server}; authenticate, check policy, request a passport, adjust the task, and forward it.
 
-The admission proxy is a Go service that implements the \code{ax.v1alpha1.AX} gRPC service using the generated types from \codeurl{github.com/google/ax/pkg/apis/v1alpha1}. Read-only calls (\code{GetTask}, \code{ListTasks}, \code{WatchTask}) are forwarded after authentication, filtered so that principals only see their own tasks. \code{CreateTask} goes through the following pipeline:
+The admission proxy is a Go service that implements the \code{ax.v1alpha1.AX} gRPC service using the generated types from \codeurl{github.com/google/ax/pkg/apis/v1alpha1}. Read-only calls (\code{GetTask}, \code{ListTasks}, \code{WatchTask}) are forwarded after authentication, filtered so that principals only see their own tasks. AX has no separate create call: \code{UpdateTask} creates a task or updates an existing one. Every \code{UpdateTask} goes through the following pipeline:
 
 \begin{enumerate}
   \item \textbf{Authenticate} the ID token; reject with \code{UNAUTHENTICATED} if missing or invalid.
   \item \textbf{Find the applicable policy} by the principal's groups.
-  \item \textbf{Validate} the image (must be a pinned digest matching \code{images.allow}), the model, resource limits and the requested visa. Reject with \code{PERMISSION\_DENIED} and a human-readable reason otherwise, e.g.\ \emph{``image tag :latest is not allowed; pin a digest''}.
-  \item \textbf{Compute the manifest hash}: SHA-256 over a canonical serialisation of the task spec and its bound workspaces. Any change to the task (command, environment, repositories) changes the hash and therefore the passport.
+  \item \textbf{Create or update?} If a task with this name already exists, the call is an update. Only the principal who launched the task may update it, and an update that changes the manifest hash (step~5) is treated like a new launch: it needs a new passport, and the old one is revoked.
+  \item \textbf{Validate} the image (must be a pinned digest matching \code{images.allow}), the model, resource limits, the debug flag (\code{spec.debug} only if \code{tasks.allowDebug}) and the requested visa. Reject with \code{PERMISSION\_DENIED} and a human-readable reason otherwise, e.g.\ \emph{``image tag :latest is not allowed; pin a digest''}.
+  \item \textbf{Compute the manifest hash}: SHA-256 over a canonical serialisation of the task spec and the workspaces and gateway it references. Any change to the task (command, environment, repositories, network rules) changes the hash and therefore the passport.
   \item \textbf{Request a passport} from the passport authority with task identity, principal, effective visa and TTL.
-  \item \textbf{Adjust the task}: set \code{spec.image} to the KYA runner variant of the requested image (a thin layer on top that replaces \codeurl{/usr/local/bin/ax-task-runner}); add environment entries \code{HTTPS\_PROXY}, \code{HTTP\_PROXY} (with a per-task proxy credential), \code{KYA\_PASSPORT\_ID} and \code{KYA\_EVENTS\_URL}.
-  \item \textbf{Forward} the call to \code{ax-server}, record \code{task.created} and \code{passport.issued} in the audit ledger, and return AX's response unchanged.
+  \item \textbf{Adjust the task}: set \code{spec.image} to the KYA runner variant of the requested image (a thin layer on top that replaces \codeurl{/usr/local/bin/ax-task-runner}); set \code{spec.gateway} to \code{kya-egress-only}, overriding any gateway in the request; add environment entries \code{HTTPS\_PROXY}, \code{HTTP\_PROXY} (with a per-task proxy credential), \code{KYA\_PASSPORT\_ID} and \code{KYA\_EVENTS\_URL}.
+  \item \textbf{Forward} the call to \code{ax-server}, record \code{task.created} (or \code{task.updated}) and \code{passport.issued} in the audit ledger, and return AX's response unchanged.
 \end{enumerate}
+
+A task refers to its workspaces and gateway \emph{by name}, so the resources it points to must be protected too. The proxy therefore also handles the other write calls of the AX API:
+
+\begin{itemize}
+  \item \code{UpdateGateway} and \code{DeleteGateway} are reserved for platform operators; principals cannot change the network rules of any task.
+  \item \code{UpdateModel} and \code{DeleteModel} are reserved for platform operators, because a model resource carries the reference to the provider's API key.
+  \item \code{UpdateWorkspace} is allowed for a principal's own workspaces, but rejected while a running task references the workspace, because the change would silently alter what that task's passport describes.
+\end{itemize}
+
+Finally, a Kubernetes NetworkPolicy allows only the admission proxy and \code{ax-controller} to connect to \code{ax-server}. Without it, anyone who can reach \code{ax-server} directly could bypass every check above.
 
 \begin{example}[A rejected launch]
 A student applies a task whose image is \code{ghcr.io/example/shopping-agent:latest} and whose requested visa includes \code{payments.pay}. The proxy answers:
@@ -110,11 +124,11 @@ A passport is a JSON Web Token signed by the PA with Ed25519 (JWS algorithm \cod
   "iat": 1760433123,  "nbf": 1760433123,  "exp": 1760440323,
   "cnf": { "jwk": { "kty": "OKP", "crv": "Ed25519", "x": "5HqWc...", "kid": "k-7f3a" } },
   "kya": {
-    "ver": "0.1",
+    "ver": "0.2",
     "task": {
       "atespace": "default", "name": "shop-7f3a",
       "image": "sha256:3a0dea6a...cac6", "manifest": "sha256:91be44c0...04d2",
-      "model": "anthropic/claude-opus-5"
+      "gateway": "kya-egress-only", "model": "anthropic/claude-opus-5"
     },
     "principal": {
       "sub": "alper@cs.example.edu", "idp": "https://sso.example.edu",
@@ -146,7 +160,7 @@ There are two kinds of keys:
 
 \begin{itemize}
   \item The \textbf{issuer key} of the PA signs passports. Its public half is published at \codeurl{https://pa.kya.dev/.well-known/jwks.json}. It is rotated monthly; old keys stay published until all passports they signed have expired.
-  \item A \textbf{task key} is generated by the PA for each task (Ed25519). Its public half is embedded in the passport's \code{cnf.jwk} claim (RFC~7800). Its private half is handed to the egress gateway over mutual TLS and is kept only in the gateway's memory; the PA does not retain it, and it never enters the sandbox.
+  \item A \textbf{task key} is generated by the PA for each task (Ed25519). Its public half is embedded in the passport's \code{cnf.jwk} claim (RFC~7800). Its private half is handed to the signing proxy over mutual TLS and is kept only in the proxy's memory; the PA does not retain it, and it never enters the sandbox.
 \end{itemize}
 
 Because the passport names the key that must sign each request, a passport copied from a log file or network capture is useless on its own: whoever presents it must also produce a fresh signature with the task key.
@@ -183,47 +197,49 @@ Passports are short-lived (two hours by default), which limits the damage of any
 %-----------------------------------------------------------------
 \subsection{KYA runner}
 
-\textbf{Responsibility:} everything AX's default runner does, plus: configure the sandbox so that the agent's traffic goes through the gateway, report what the agent does, and keep the agent informed about approvals it is waiting for.
+\textbf{Responsibility:} everything AX's default runner does, plus: configure the sandbox so that the agent's traffic goes through the signing proxy, report what the agent does, and keep the agent informed about approvals it is waiting for.
 
 We build the KYA runner in Go by embedding the public \codeurl{github.com/google/ax/runner} package~\cite{ax-runner}, so workspace preparation, the metadata server, process supervision, suspend/resume behaviour and \code{ax ssh} support stay identical to upstream. On top of that, before starting the agent command, the runner:
 
 \begin{enumerate}
-  \item installs the cluster's \textbf{gateway CA certificate} into the sandbox trust store, so that HTTPS connections through the gateway (which re-encrypts traffic, see below) are accepted by standard HTTP libraries;
+  \item installs the cluster's \textbf{proxy CA certificate} into the sandbox trust store, so that HTTPS connections through the signing proxy (which re-encrypts traffic, see below) are accepted by standard HTTP libraries;
   \item exports \code{HTTP\_PROXY} and \code{HTTPS\_PROXY} (already injected by the admission proxy) and \code{NO\_PROXY=127.0.0.1} for the local metadata server;
   \item starts a local \textbf{event endpoint} (\code{KYA\_EVENTS\_URL}) where agent frameworks can optionally report tool calls; it also records process starts and exits it supervises;
   \item forwards these events, batched, to the trust observer;
   \item serves a read-only \textbf{approval status endpoint} (\code{http://127.0.0.1/kya/v1/approvals/\{id\}}) and exposes it, together with the task's own permissions, as a small set of \textbf{MCP tools} registered in the task's workspace (Section~\ref{sec:stepup}).
 \end{enumerate}
 
-Note that the runner only \emph{configures} routing. A malicious agent could ignore the proxy variables; what actually \emph{forces} traffic through the gateway is the network rule that blocks every other destination (Section~\ref{sec:seams}).
+Note that the runner only \emph{configures} routing. A malicious agent could ignore the proxy variables; what actually \emph{forces} traffic through the signing proxy is the AX gateway \code{kya-egress-only}, which blocks every other destination (Section~\ref{sec:seams}).
+
+Workspace preparation (Git clones, MCP and skill registries) runs inside the same sandbox and therefore also goes through the signing proxy; the hosts it needs come from the policy and are part of the task's visa. AX's roadmap moves workspace setup into a separate setup actor; that actor could then get its own, narrower gateway.
 
 The runner never holds keys or passports. Even if the agent takes full control of the sandbox, including the runner process, it gains nothing it could use to impersonate another task or to talk to a host outside its visa.
 
 %-----------------------------------------------------------------
-\subsection{Egress gateway}
+\subsection{Signing proxy}\label{sec:signing-proxy}
 
-\textbf{Responsibility:} be the single exit from all sandboxes; enforce the host allowlist; attach the passport; sign requests; meter traffic; report events.
+\textbf{Responsibility:} be the single exit from all sandboxes; enforce the host allowlist of each task's visa; attach the passport; sign requests; meter traffic; report events.
 
-The gateway is an HTTP(S) forward proxy written in Go. Figure~\ref{fig:signing} shows what happens to one request.
+The signing proxy is an HTTP(S) forward proxy written in Go. It works together with AX's \code{Gateway} resource, and the two have different jobs. The AX gateway \code{kya-egress-only} decides \emph{where} a sandbox may connect: to the signing proxy and nowhere else. The signing proxy decides \emph{what} leaves the cluster and \emph{how} it is signed. (Drafts up to v0.2 called this component the ``egress gateway''; we renamed it to avoid confusion with AX's \code{Gateway}.) Figure~\ref{fig:signing} shows what happens to one request.
 
 \begin{figure}[H]
   \centering
   \includegraphics[width=\linewidth]{signing.png}
-  \caption{The egress gateway turns a plain request from the agent into a signed, attributable request. The agent itself never sees the key.}
+  \caption{The signing proxy turns a plain request from the agent into a signed, attributable request. The AX gateway makes the proxy the only destination the sandbox can reach; the agent itself never sees the key.}
   \label{fig:signing}
 \end{figure}
 
 \subsubsection{Identifying the calling task}
 
-Each task's proxy URL contains a random 256-bit proxy credential (\codeurl{http://task:<credential>@kya-gateway:3128}), created by the admission proxy and bound to exactly one task. The gateway maps it to the task, its passport and its key. The credential is only accepted at the gateway, which is not reachable from outside the cluster. Where Agent Substrate exposes the actor-to-worker mapping, the gateway additionally checks the source address.
+Each task's proxy URL contains a random 256-bit proxy credential (\codeurl{http://task:<credential>@kya-proxy:3128}), created by the admission proxy and bound to exactly one task. The signing proxy maps it to the task, its passport and its key. The credential is only accepted at the signing proxy, which is not reachable from outside the cluster. Where Agent Substrate exposes the actor-to-worker mapping, the proxy additionally checks the source address. Once AX issues SPIFFE identities to task actors (on its roadmap), the credential can be replaced by the task's X.509-SVID over mutual TLS.
 
 \subsubsection{Seeing inside HTTPS}
 
-To sign a request, the gateway must see its method, path, headers and body. For HTTPS this means the gateway terminates the agent's TLS connection with a certificate issued by the cluster-local gateway CA (installed by the KYA runner) and opens a new, normal TLS connection to the real destination. This is the same technique corporate proxies use. It makes the gateway a highly trusted component (Section~\ref{sec:threats}); in exchange, agents need no code changes at all. Agents that want to avoid interception can instead send plain HTTP to the gateway with an explicit target, and the gateway performs TLS upstream.
+To sign a request, the signing proxy must see its method, path, headers and body. For HTTPS this means the proxy terminates the agent's TLS connection with a certificate issued by the cluster-local proxy CA (installed by the KYA runner) and opens a new, normal TLS connection to the real destination. This is the same technique corporate proxies use. It makes the signing proxy a highly trusted component (Section~\ref{sec:threats}); in exchange, agents need no code changes at all. Agents that want to avoid interception can instead send plain HTTP to the proxy with an explicit target, and the proxy performs TLS upstream.
 
 \subsubsection{The signature}
 
-The gateway signs with HTTP Message Signatures (RFC~9421), following the Web Bot Auth profile~\cite{webbotauth} where possible:
+The signing proxy signs with HTTP Message Signatures (RFC~9421), following the Web Bot Auth profile~\cite{webbotauth} where possible:
 
 \begin{itemize}
   \item covered components: \code{@method}, \code{@authority}, \code{@path}, \code{content-digest} (RFC~9530 hash of the body) and \code{kya-passport};
@@ -235,7 +251,7 @@ Covering the passport header in the signature ties the passport to this specific
 
 \subsubsection{Metering and credential injection}
 
-Because every byte passes through it, the gateway also counts requests per host, bytes, and (for recognised LLM APIs) tokens used, and reports them to the observer as spend signals. As a stretch goal, the gateway can \emph{inject} the model provider's API key into LLM calls, so that the key referenced by AX's \code{Model} resource no longer needs to be present inside the sandbox at all (NFR5).
+Because every byte passes through it, the signing proxy also counts requests per host, bytes, and (for recognised LLM APIs) tokens used, and reports them to the observer as spend signals. As a stretch goal, the proxy can \emph{inject} the model provider's API key into LLM calls, so that the key referenced by AX's \code{Model} resource no longer needs to be present inside the sandbox at all (NFR5).
 
 %-----------------------------------------------------------------
 \subsection{Verifier SDK}\label{sec:verifier}
@@ -280,7 +296,7 @@ Some requests are valid but too risky to execute without a human: the amount exc
 
 \begin{enumerate}
   \item \textbf{The relying party never contacts the human.} It usually does not even know who the principal is. It only says ``approval required'' and later verifies a signed proof. Contacting the principal is the job of the KYA platform, which authenticated that person at launch. The division of roles is the same as in 3-D Secure card payments: the shop does not send you an SMS, your bank does, and the shop only checks the bank's signed answer.
-  \item \textbf{The agent is informed, not bypassed.} Human approval can take minutes. If the agent were kept in the dark (for example by the gateway silently holding the request), its HTTP client would time out, it would retry or look for another shop, and it could not tell its own user what is happening or adapt to a rejection. The agent therefore receives an explicit, machine-readable answer and can follow the approval's status.
+  \item \textbf{The agent is informed, not bypassed.} Human approval can take minutes. If the agent were kept in the dark (for example by the signing proxy silently holding the request), its HTTP client would time out, it would retry or look for another shop, and it could not tell its own user what is happening or adapt to a rejection. The agent therefore receives an explicit, machine-readable answer and can follow the approval's status.
   \item \textbf{The agent can see the approval, but never grant it.} Granting requires the principal's own OIDC login in the console. Everything exposed to the agent is read-only, and the grant is bound to one exact request.
 \end{enumerate}
 
@@ -307,7 +323,7 @@ Content-Type: application/problem+json
 }
 \end{lstlisting}
 
-\paragraph{2. The gateway opens an approval and tells the agent.} The gateway recognises this response type, creates approval \code{ap\_7Q2M} in the console (with the relying party's host, the parsed item and amount, and the request digest), and passes the answer on to the agent, enriched with what the agent needs to follow up:
+\paragraph{2. The signing proxy opens an approval and tells the agent.} The signing proxy recognises this response type, creates approval \code{ap\_7Q2M} in the console (with the relying party's host, the parsed item and amount, and the request digest), and passes the answer on to the agent, enriched with what the agent needs to follow up:
 
 \begin{lstlisting}[language=json]
 HTTP/1.1 403 Forbidden
@@ -345,7 +361,9 @@ While waiting, the agent can tell its own user what it is waiting for, or contin
 
 \paragraph{4. The principal decides.} The console notifies the principal (web push or e-mail in the prototype). The approval page shows two clearly separated kinds of information: \emph{verified facts} taken from the refused request and the relying party (host, item, amount), and the agent's own \emph{justification}, if it supplied one, labelled as an unverified claim. The distinction matters because the agent's text may itself be the product of a prompt injection. The principal approves or rejects and may add a note (``the 4-port model is enough'').
 
-\paragraph{5. The agent acts on the decision.} If approved, the PA issues a short-lived \textbf{approval grant} (five minutes), a signed token bound to the exact request digest, similar in spirit to the user-signed ``mandates'' of the Agent Payments Protocol~\cite{ap2}. The agent sends \emph{the same request again}; the gateway finds a grant whose digest matches, attaches it in a \code{KYA-Approval} header, and the verifier accepts the request after checking the grant's signature and digest. If the agent changes anything (item, quantity, amount), the digest no longer matches and a new approval is needed. If rejected, the agent receives the rejection and the note, and can adapt its plan.
+\paragraph{5. The agent acts on the decision.} If approved, the PA issues a short-lived \textbf{approval grant} (five minutes), a signed token bound to the exact request digest, similar in spirit to the user-signed ``mandates'' of the Agent Payments Protocol~\cite{ap2}. The agent sends \emph{the same request again}; the signing proxy finds a grant whose digest matches, attaches it in a \code{KYA-Approval} header, and the verifier accepts the request after checking the grant's signature and digest. If the agent changes anything (item, quantity, amount), the digest no longer matches and a new approval is needed. If rejected, the agent receives the rejection and the note, and can adapt its plan.
+
+\paragraph{Relation to AX's planned approval policies.} The AX roadmap adds approval policies and token/timeout budgets to the \code{Task} spec. Those control the platform from the inside. Our approvals are different in one important way: the relying party can verify them, because the grant is signed by the PA and bound to the exact request. If AX ships native approvals, the console can use them as the notification channel while keeping the signed grant.
 
 \paragraph{Interaction with the trust observer.} An \code{approval-required} answer is not a violation: the agent is doing exactly what the rules ask. It therefore carries no trust penalty. Only abuse of the mechanism is penalised, for example opening many approvals for slightly different requests in a short time, which would amount to spamming the principal.
 
@@ -365,7 +383,7 @@ Figure~\ref{fig:observer} shows the pipeline from raw signals to actions.
 
 \subsubsection{Signals and features}
 
-Signals arrive as events (JSON over a message queue; OpenTelemetry-compatible attributes). For each task, the observer maintains sliding-window features, including: request rate relative to the task's own recent baseline, ratio of denied requests, number of never-before-seen hosts and action types for this image, spend velocity relative to the remaining budget, and a repetition index (how often the last $k$ requests repeat the same method, path and body hash, which detects loops).
+Signals arrive as events (JSON over a message queue; OpenTelemetry-compatible attributes) from the signing proxy, the KYA runner and the verifiers, plus lifecycle transitions from AX's \code{WatchTask}. When AX ships its planned runner- and gateway-level telemetry, it can replace the runner's own event reporting. For each task, the observer maintains sliding-window features, including: request rate relative to the task's own recent baseline, ratio of denied requests, number of never-before-seen hosts and action types for this image, spend velocity relative to the remaining budget, and a repetition index (how often the last $k$ requests repeat the same method, path and body hash, which detects loops).
 
 \subsubsection{Score}
 
@@ -392,7 +410,7 @@ Rules make the observer predictable and explainable (every penalty appears in th
 \midrule
 $s \ge 0.6$ & Normal operation.\\
 $0.4 \le s < 0.6$ & Step-up: every state-changing request needs principal approval; the PA may issue a narrower replacement passport (for example, read-only actions).\\
-$s < 0.4$ & Call \code{SuspendTask} on AX, revoke the passport, notify the principal. The suspended task keeps its memory and workspace, so an operator can inspect it (\code{ax ssh}) and resume it if it was a false alarm.\\
+$s < 0.4$ & Call \code{SuspendTask} on AX, revoke the passport, notify the principal. The suspended task keeps its memory and workspace, so it can be resumed if it was a false alarm. Interactive inspection with \code{ax ssh} is only possible for tasks started with \code{spec.debug}.\\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -418,7 +436,7 @@ AX expects agents to break work into trees of tasks~\cite{ax-concepts}. Without 
   \label{fig:delegation}
 \end{figure}
 
-When an agent creates a sub-task, its \code{CreateTask} call also goes through the admission proxy (the only path to \code{ax-server}), authenticated by the parent's proxy credential. The proxy calls \code{:delegate} on the PA, which checks that
+When an agent creates a sub-task, its \code{UpdateTask} call also goes through the admission proxy (the only path to \code{ax-server}), authenticated by the parent's proxy credential. The proxy calls \code{:delegate} on the PA, which checks that
 \begin{itemize}
   \item the requested hosts and actions are a subset of the parent's;
   \item every limit is at most the parent's remaining budget, which is then reserved;
@@ -442,7 +460,7 @@ The ledger is an append-only table in PostgreSQL. Each entry contains its sequen
   \label{fig:audit}
 \end{figure}
 
-{\raggedright Events recorded include \code{task.created}, \code{task.rejected}, \code{passport.issued}, \code{passport.revoked}, \code{egress.denied}, \code{request.allowed}, \code{request.denied}, \code{approval.requested}, \code{approval.granted}, \code{trust.changed} and \code{task.suspended}.\par}
+{\raggedright Events recorded include \code{task.created}, \code{task.updated}, \code{task.rejected}, \code{passport.issued}, \code{passport.revoked}, \code{egress.denied}, \code{request.allowed}, \code{request.denied}, \code{approval.requested}, \code{approval.granted}, \code{trust.changed} and \code{task.suspended}.\par}
 
 %-----------------------------------------------------------------
 \subsection{Console}

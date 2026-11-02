@@ -8,7 +8,7 @@
 \toprule
 \textbf{Component} & \textbf{Technology} & \textbf{Reason}\\
 \midrule
-Admission proxy, KYA runner, egress gateway & Go & Same language as AX; reuses its generated gRPC types and runner package; strong HTTP/TLS libraries.\\
+Admission proxy, KYA runner, signing proxy & Go & Same language as AX; reuses its generated gRPC types and runner package; strong HTTP/TLS libraries.\\
 Passport authority & Go, PostgreSQL & Ed25519 and JWS in the standard ecosystem; small, auditable service.\\
 Verifier SDK & Java (Spring Boot starter), Go middleware & Covers the most common backend stacks; the team already knows Spring Boot.\\
 Trust observer & Python (FastAPI, scikit-learn), Redis Streams or NATS & Fast iteration on features and models; isolation forest in scikit-learn.\\
@@ -28,7 +28,7 @@ agentpassport/
     kya/                 # CLI helper: login, policy apply, passport inspect
     admission-proxy/
     passport-authority/
-    egress-gateway/
+    signing-proxy/
     kya-runner/          # embeds github.com/google/ax/runner
   pkg/
     passport/            # claims, signing, verification (shared)
@@ -56,10 +56,10 @@ agentpassport/
 \toprule
 \textbf{WP} & \textbf{Title} & \textbf{Outputs}\\
 \midrule
-WP0 & Platform setup & AX + Agent Substrate running on a cluster; pinned AX commit; egress-control experiment (Section~\ref{sec:seams}).\\
+WP0 & Platform setup & AX + Agent Substrate running on a cluster; pinned AX version (v0.3.0 or a later commit); AX gateway egress experiment and \code{ax-server} NetworkPolicy (Section~\ref{sec:seams}).\\
 WP1 & Specification & Passport format, signature profile, policy schema, threat model (this document, refined).\\
 WP2 & Identity core & Passport authority, admission proxy, \code{kya} CLI, OIDC integration.\\
-WP3 & Enforcement & KYA runner, egress gateway (allowlist, TLS, signing, metering).\\
+WP3 & Enforcement & KYA runner, signing proxy (allowlist, TLS, signing, metering), \code{kya-egress-only} AX gateway.\\
 WP4 & Relying-party side & Verifier SDKs, step-up approvals, demo shop and payments API.\\
 WP5 & Trust observer & Event pipeline, features, rules, anomaly model, AX suspension.\\
 WP6 & Delegation and audit & Child passports, budget reservation, hash-chained ledger, checkpoints.\\
@@ -71,19 +71,19 @@ WP8 & Evaluation & Attack suite, benchmarks, ablation study, final report.\\
 
 \subsection{Timeline}
 
-The project spans two semesters (Figure~\ref{fig:timeline}). The first semester delivers a working vertical slice: a task launched through the admission proxy, with a passport, whose requests are signed by the gateway and verified by the demo shop. The second semester adds the observer, delegation, the console and the full evaluation.
+The project spans two semesters (Figure~\ref{fig:timeline}). The first semester delivers a working vertical slice: a task launched through the admission proxy, with a passport, whose requests are signed by the signing proxy and verified by the demo shop. The second semester adds the observer, delegation, the console and the full evaluation.
 
 \begin{figure}[H]
   \centering
   \includegraphics[width=\linewidth]{timeline.png}
-  \caption{Planned timeline. Colours follow the diagrams: purple for KYA core components, green for relying-party work, red for evaluation, brown for reports.}
+  \caption{Planned timeline, in weeks from the start of October 2026. Colours follow the diagrams: grey for setup, purple for KYA core components, green for relying-party work, red for evaluation, brown for reports. Diamonds mark milestones M1--M4.}
   \label{fig:timeline}
 \end{figure}
 
 \textbf{Milestones.}
 \begin{itemize}
-  \item \textbf{M1 (end of November 2026):} AX running; passport spec frozen; first passport issued for a real AX task.
-  \item \textbf{M2 (end of January 2027):} vertical slice demo, i.e.\ Example~1 and the gateway half of Example~2 working end to end; interim report.
+  \item \textbf{M1 (end of November 2026):} AX pinned and running; AX gateway egress restriction verified; passport spec frozen; first passport issued for a real AX task.
+  \item \textbf{M2 (end of January 2027):} vertical slice demo, i.e.\ Example~1 and the signing-proxy half of Example~2 working end to end; interim report.
   \item \textbf{M3 (end of April 2027):} observer suspends tasks automatically; delegation works; Examples~2--6 reproducible.
   \item \textbf{M4 (June 2027):} evaluation complete; final report, poster and live demonstration.
 \end{itemize}
@@ -98,7 +98,7 @@ Work packages are grouped into roles so that each team member owns a coherent pa
 \toprule
 \textbf{Role} & \textbf{Main WPs} & \textbf{Focus}\\
 \midrule
-Platform and infrastructure & WP0, WP3 & Cluster, AX, runner, gateway, deployment.\\
+Platform and infrastructure & WP0, WP3 & Cluster, AX, AX gateway and NetworkPolicy setup, runner, signing proxy, deployment.\\
 Identity and cryptography & WP1, WP2, WP6 & Passport authority, signatures, delegation, ledger.\\
 Relying party and SDK & WP4, WP7 & Verifier SDKs, demo services, console.\\
 Observer and evaluation & WP5, WP8 & Features, anomaly model, attack suite, benchmarks.\\
@@ -114,9 +114,11 @@ Observer and evaluation & WP5, WP8 & Features, anomaly model, attack suite, benc
 \toprule
 \textbf{Risk} & \textbf{Impact} & \textbf{Mitigation}\\
 \midrule
-AX introduces breaking API changes (it is \code{v1alpha1}). & High & Pin one AX commit for the whole project; keep all AX-specific code in thin adapters (proxy forwarding, runner embedding, suspend client).\\
+AX introduces breaking API changes (it is \code{v1alpha1}; v0.3 already replaced \code{CreateTask} with \code{UpdateTask}). & High & Pin one AX version for the whole project; keep all AX-specific code in thin adapters (proxy forwarding, runner embedding, gateway binding, suspend client).\\
+AX ships native features that overlap with ours (SPIFFE, budgets, approval policies, telemetry). & Medium & Treat them as inputs rather than competitors: align the passport subject with SPIFFE, consume AX telemetry, and focus our contribution on what relying parties can verify.\\
+Per-task environment reduces AX actor density. & Medium & Measure it (RQ2); keep the per-task part of the environment minimal; move task identification to SPIFFE SVIDs when AX provides them.\\
 Agent Substrate is hard to install or needs more resources than available. & High & Start with WP0 immediately; request cloud education credits; as a last resort, implement a minimal ``fake AX'' with the same gRPC API on plain Kubernetes pods so that the KYA layer can still be developed and evaluated.\\
-Sandbox egress cannot be restricted to the gateway. & Medium & Use Kubernetes NetworkPolicy on worker pods; otherwise fall back to proxy variables and state the limitation clearly.\\
+AX's gateway does not restrict sandbox egress to the signing proxy reliably (gateway reconciliation is still on the roadmap). & Medium & Test it in WP0; never change \code{kya-egress-only} while tasks run; add a Kubernetes NetworkPolicy on worker pods; otherwise fall back to proxy variables and state the limitation clearly.\\
 TLS interception breaks some agent libraries (certificate pinning). & Medium & Offer the explicit-proxy mode; document affected libraries.\\
 Anomaly model has too many false positives. & Medium & Rules first, model second; conservative thresholds; suspension instead of deletion.\\
 Scope creep (KYA is a broad topic). & Medium & Milestones define a minimum viable system; stretch goals (credential injection, Biscuit, hardware keys) are explicitly optional.\\
@@ -127,7 +129,7 @@ Scope creep (KYA is a broad topic). & Medium & Milestones define a minimum viabl
 \subsection{Deliverables}
 
 \begin{enumerate}
-  \item Open-source code for all components, with Helm charts to install AgentPassport next to AX.
+  \item Open-source code for all components, with Helm charts (including the \code{kya-egress-only} gateway and the \code{ax-server} NetworkPolicy) to install AgentPassport next to AX.
   \item The \textbf{AgentPassport specification}: passport claims, signature profile and policy schema, written so that others can implement compatible verifiers.
   \item Verifier SDKs for Spring Boot and Go, published as packages.
   \item The attack suite and benchmark scripts, reproducible by others.
